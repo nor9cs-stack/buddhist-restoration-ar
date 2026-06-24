@@ -174,17 +174,6 @@ function waitForScene(scene: AFrameScene) {
   });
 }
 
-async function ensureModelIsAvailable(modelUrl: string) {
-  const response = await fetch(modelUrl, {
-    cache: "no-store",
-    method: "HEAD"
-  });
-
-  if (!response.ok) {
-    throw new Error(MODEL_LOAD_ERROR);
-  }
-}
-
 async function requestCameraAccess() {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error(
@@ -363,7 +352,6 @@ function CalibrationControls({
 
 export default function ARViewer() {
   const sceneRef = useRef<AFrameScene | null>(null);
-  const assetRefs = useRef<Map<string, HTMLElement>>(new Map());
   const anchorRefs = useRef<Map<string, HTMLElement>>(new Map());
   const modelRefs = useRef<Map<string, HTMLElement>>(new Map());
   const modelFinishedRef = useRef(false);
@@ -472,7 +460,6 @@ export default function ARViewer() {
       return;
     }
 
-    const assets = Array.from(assetRefs.current.values());
     const models = Array.from(modelRefs.current.values());
     modelFinishedRef.current = false;
 
@@ -480,28 +467,28 @@ export default function ARViewer() {
       console.log(`[AR Debug] ${eventName}`, event);
     };
 
-    const handleAssetLoaded = (event: Event) => {
-      logEvent("gltf asset loaded", event);
-      updateDebug({ gltfAssetLoaded: true, gltfAssetFailed: false });
-    };
-
-    const handleAssetError = (event: Event) => {
-      logEvent("gltf asset failed", event);
-      updateDebug({ gltfAssetLoaded: false, gltfAssetFailed: true });
-    };
-
     const handleModelLoaded = (event: Event) => {
       logEvent("model-loaded", event);
       modelFinishedRef.current = true;
       setAssetLoaded(true);
-      updateDebug({ modelLoaded: true, modelLoadFailed: false });
+      updateDebug({
+        gltfAssetLoaded: true,
+        gltfAssetFailed: false,
+        modelLoaded: true,
+        modelLoadFailed: false
+      });
     };
 
     const handleModelError = (event: Event) => {
       logEvent("model-error", event);
       modelFinishedRef.current = true;
       setAssetLoaded(false);
-      updateDebug({ modelLoaded: false, modelLoadFailed: true });
+      updateDebug({
+        gltfAssetLoaded: false,
+        gltfAssetFailed: true,
+        modelLoaded: false,
+        modelLoadFailed: true
+      });
       setRuntimeState("error");
       setMessage(MODEL_LOAD_ERROR);
     };
@@ -515,11 +502,6 @@ export default function ARViewer() {
       logEvent("object3dremove", event);
       updateDebug({ object3DRemoved: true });
     };
-
-    assets.forEach((asset) => {
-      asset.addEventListener("loaded", handleAssetLoaded);
-      asset.addEventListener("error", handleAssetError);
-    });
 
     models.forEach((model) => {
       model.addEventListener("model-loaded", handleModelLoaded);
@@ -546,11 +528,6 @@ export default function ARViewer() {
 
     return () => {
       clearTimeout(timeoutId);
-      assets.forEach((asset) => {
-        asset.removeEventListener("loaded", handleAssetLoaded);
-        asset.removeEventListener("error", handleAssetError);
-      });
-
       models.forEach((model) => {
         model.removeEventListener("model-loaded", handleModelLoaded);
         model.removeEventListener("model-error", handleModelError);
@@ -601,9 +578,6 @@ export default function ARViewer() {
       );
       updateDebug({ mindarScriptLoaded: true });
 
-      setMessage("正在检查佛像模型文件");
-      await ensureModelIsAvailable(primaryStatue.modelUrl);
-
       setSceneEnabled(true);
       setMessage("正在请求相机权限");
       cameraRequested = true;
@@ -645,7 +619,7 @@ export default function ARViewer() {
             : "AR 启动失败，请检查相机权限、HTTPS 设置与网络连接。"
       );
     }
-  }, [primaryStatue.modelUrl, updateDebug]);
+  }, [updateDebug]);
 
   const adjustModelOffset = useCallback((delta: Vec3) => {
     setModelOffset(([x, y, z]) => [
@@ -716,20 +690,6 @@ export default function ARViewer() {
           device-orientation-permission-ui="enabled: false"
           embedded
         >
-          <a-assets>
-            <a-asset-item
-              ref={(element) => {
-                if (element) {
-                  assetRefs.current.set(primaryStatue.name, element);
-                } else {
-                  assetRefs.current.delete(primaryStatue.name);
-                }
-              }}
-              id={primaryStatue.name}
-              src={primaryStatue.modelUrl}
-            />
-          </a-assets>
-
           {statues.map((statue) => {
             const anchorKey = `${statue.name}-${statue.targetIndex}`;
 
@@ -755,7 +715,7 @@ export default function ARViewer() {
                       modelRefs.current.delete(anchorKey);
                     }
                   }}
-                  gltf-model={`#${statue.name}`}
+                  gltf-model={statue.modelUrl}
                   position={vec3ToAttribute(modelLocalPosition)}
                   rotation={vec3ToAttribute(statue.rotation)}
                   scale={vec3ToAttribute(modelScale)}

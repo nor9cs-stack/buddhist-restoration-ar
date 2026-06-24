@@ -98,6 +98,95 @@ a {
   color: var(--error);
 }
 
+.ar-lite-page {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #0b0907;
+}
+
+.ar-lite-start {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 20;
+  min-height: 48px;
+  border: 1px solid rgba(61, 37, 22, 0.75);
+  border-radius: 0;
+  background: rgba(255, 250, 242, 0.94);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  padding: 10px 18px;
+  transform: translate(-50%, -50%);
+}
+
+.ar-lite-message {
+  position: fixed;
+  left: 50%;
+  bottom: max(72px, env(safe-area-inset-bottom));
+  z-index: 20;
+  width: min(320px, calc(100vw - 28px));
+  border: 1px solid rgba(61, 37, 22, 0.72);
+  background: rgba(255, 250, 242, 0.9);
+  color: var(--ink);
+  padding: 10px 12px;
+  text-align: center;
+  transform: translateX(-50%);
+}
+
+.ar-lite-debug {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  z-index: 20;
+  width: min(280px, calc(100vw - 24px));
+  border: 1px solid rgba(61, 37, 22, 0.72);
+  background: rgba(255, 250, 242, 0.9);
+  color: var(--ink);
+  padding: 10px 12px;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    "Liberation Mono",
+    monospace;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  backdrop-filter: blur(10px);
+}
+
+.ar-lite-debug strong {
+  display: block;
+  margin-bottom: 6px;
+  font-family:
+    ui-serif,
+    "Songti SC",
+    "Noto Serif CJK SC",
+    "Times New Roman",
+    serif;
+}
+
+.ar-lite-debug dl {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.ar-lite-debug div {
+  display: grid;
+  grid-template-columns: minmax(104px, 52%) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.ar-lite-debug dt {
+  color: var(--ink-muted);
+}
+
+.ar-lite-debug dd {
+  margin: 0;
+}
+
 .model-test-page {
   position: fixed;
   inset: 0;

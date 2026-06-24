@@ -98,6 +98,75 @@ a {
   color: var(--error);
 }
 
+.model-test-page {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.model-test-panel {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top));
+  left: max(14px, env(safe-area-inset-left));
+  z-index: 20;
+  width: min(360px, calc(100vw - 28px));
+  max-height: 44svh;
+  overflow-y: auto;
+  border: 1px solid rgba(61, 37, 22, 0.72);
+  background: rgba(255, 250, 242, 0.9);
+  color: var(--ink);
+  padding: 12px;
+  backdrop-filter: blur(10px);
+}
+
+.model-test-panel h1 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.model-test-panel dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    "Liberation Mono",
+    monospace;
+  font-size: 0.75rem;
+}
+
+.model-test-panel div {
+  display: grid;
+  grid-template-columns: minmax(96px, 38%) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.model-test-panel dt {
+  color: var(--ink-muted);
+}
+
+.model-test-panel dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.model-test-scene {
+  width: 100vw;
+  height: 100svh;
+}
+
+.model-test-loading {
+  display: grid;
+  min-height: 100svh;
+  place-items: center;
+  color: var(--ink);
+}
+
 .calibration-panel {
   position: fixed;
   top: max(14px, env(safe-area-inset-top));

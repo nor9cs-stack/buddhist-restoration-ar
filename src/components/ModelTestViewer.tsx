@@ -8,6 +8,8 @@ type ModelTestState = {
   modelError: boolean;
   object3DSet: boolean;
   object3DRemoved: boolean;
+  boundingBoxSize: string;
+  appliedScale: string;
   lastEvent: string;
 };
 
@@ -21,7 +23,24 @@ const initialState: ModelTestState = {
   modelError: false,
   object3DSet: false,
   object3DRemoved: false,
+  boundingBoxSize: "not measured",
+  appliedScale: "not applied",
   lastEvent: "waiting"
+};
+
+type AFrameModelElement = HTMLElement & {
+  object3D?: {
+    position: {
+      x: number;
+      y: number;
+      z: number;
+      set: (x: number, y: number, z: number) => void;
+      sub: (value: unknown) => unknown;
+    };
+    scale: {
+      setScalar: (scale: number) => void;
+    };
+  };
 };
 
 function waitForScript(id: string, src: string) {
@@ -66,6 +85,60 @@ function waitForScript(id: string, src: string) {
       document.head.appendChild(script);
     }
   });
+}
+
+function formatNumber(value: number) {
+  return Number.isFinite(value) ? value.toFixed(4) : "unknown";
+}
+
+function autoFitModel(model: AFrameModelElement) {
+  const win = window as typeof window & {
+    THREE?: {
+      Box3: new () => {
+        setFromObject: (object: unknown) => {
+          getSize: (target: unknown) => unknown;
+          getCenter: (target: unknown) => unknown;
+        };
+      };
+      Vector3: new () => {
+        x: number;
+        y: number;
+        z: number;
+      };
+    };
+  };
+
+  if (!win.THREE || !model.object3D) {
+    return {
+      appliedScale: 1,
+      boundingBoxSize: "THREE/object3D unavailable"
+    };
+  }
+
+  model.object3D.scale.setScalar(1);
+  model.object3D.position.set(0, 0, -3);
+
+  const box = new win.THREE.Box3().setFromObject(model.object3D);
+  const size = new win.THREE.Vector3();
+  const center = new win.THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+
+  const maxDimension = Math.max(size.x, size.y, size.z);
+  const appliedScale = maxDimension > 0 ? 2 / maxDimension : 1;
+
+  model.object3D.scale.setScalar(appliedScale);
+  model.object3D.position.sub(center);
+  model.object3D.position.set(
+    model.object3D.position.x * appliedScale,
+    model.object3D.position.y * appliedScale,
+    model.object3D.position.z * appliedScale - 3
+  );
+
+  return {
+    appliedScale,
+    boundingBoxSize: `${formatNumber(size.x)} ${formatNumber(size.y)} ${formatNumber(size.z)}`
+  };
 }
 
 export default function ModelTestViewer() {
@@ -123,7 +196,10 @@ export default function ModelTestViewer() {
 
     const handleModelLoaded = (event: Event) => {
       logEvent("model-loaded", event);
+      const fit = autoFitModel(model);
       updateState({
+        appliedScale: formatNumber(fit.appliedScale),
+        boundingBoxSize: fit.boundingBoxSize,
         lastEvent: "model-loaded",
         modelLoaded: true,
         modelError: false
@@ -175,6 +251,8 @@ export default function ModelTestViewer() {
     ["model-error", state.modelError ? "yes" : "no"],
     ["object3dset", state.object3DSet ? "yes" : "no"],
     ["object3dremove", state.object3DRemoved ? "yes" : "no"],
+    ["bounding box size", state.boundingBoxSize],
+    ["applied scale", state.appliedScale],
     ["model URL", MODEL_URL],
     ["last event", state.lastEvent]
   ];

@@ -62,6 +62,10 @@ const MODEL_LOAD_ERROR =
   "佛像模型未能载入。请确认 /public/models/buddha_001.glb 存在，并且已经替换为适合移动 WebAR 的优化 GLB 文件。";
 const MODEL_OFFSET_STEP = 0.05;
 const MODEL_OFFSET_LIMIT = 1;
+const MODEL_SCALE_UP = 1.2;
+const MODEL_SCALE_DOWN = 0.8;
+const MODEL_SCALE_MIN = 0.001;
+const MODEL_SCALE_MAX = 1;
 
 function vec3ToAttribute([x, y, z]: [number, number, number]) {
   return `${x} ${y} ${z}`;
@@ -71,8 +75,16 @@ function addVec3([ax, ay, az]: Vec3, [bx, by, bz]: Vec3): Vec3 {
   return [ax + bx, ay + by, az + bz];
 }
 
+function multiplyVec3([x, y, z]: Vec3, scalar: number): Vec3 {
+  return [x * scalar, y * scalar, z * scalar];
+}
+
 function clampOffset(value: number) {
   return Math.max(-MODEL_OFFSET_LIMIT, Math.min(MODEL_OFFSET_LIMIT, value));
+}
+
+function clampScale(value: number) {
+  return Math.max(MODEL_SCALE_MIN, Math.min(MODEL_SCALE_MAX, value));
 }
 
 function waitForNextFrame() {
@@ -169,6 +181,7 @@ function DebugPanel({
   modelFileUrl,
   modelOffset,
   modelLocalPosition,
+  modelScale,
   expanded,
   onToggle
 }: {
@@ -177,6 +190,7 @@ function DebugPanel({
   modelFileUrl: string;
   modelOffset: Vec3;
   modelLocalPosition: Vec3;
+  modelScale: Vec3;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -208,7 +222,8 @@ function DebugPanel({
     ["object3D removed", debug.object3DRemoved ? "yes" : "no"],
     ["model locked", debug.modelLocked ? "yes" : "no"],
     ["current offset", vec3ToAttribute(modelOffset)],
-    ["actual model local position", vec3ToAttribute(modelLocalPosition)]
+    ["actual model local position", vec3ToAttribute(modelLocalPosition)],
+    ["current model scale", vec3ToAttribute(modelScale)]
   ];
 
   return (
@@ -244,6 +259,8 @@ function CalibrationControls({
   open,
   showTestCube,
   onAdjust,
+  onScaleDown,
+  onScaleUp,
   onReset,
   onToggleTestCube,
   onToggle
@@ -252,6 +269,8 @@ function CalibrationControls({
   open: boolean;
   showTestCube: boolean;
   onAdjust: (delta: Vec3) => void;
+  onScaleDown: () => void;
+  onScaleUp: () => void;
   onReset: () => void;
   onToggleTestCube: () => void;
   onToggle: () => void;
@@ -298,6 +317,14 @@ function CalibrationControls({
               后
             </button>
           </div>
+          <div className="calibration-grid">
+            <button type="button" onClick={onScaleUp}>
+              放大
+            </button>
+            <button type="button" onClick={onScaleDown}>
+              缩小
+            </button>
+          </div>
           <button className="calibration-reset" type="button" onClick={onReset}>
             重置位置
           </button>
@@ -322,6 +349,7 @@ export default function ARViewer() {
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [showTestCube, setShowTestCube] = useState(false);
   const [modelOffset, setModelOffset] = useState<Vec3>([0, 0, 0]);
+  const [modelScaleMultiplier, setModelScaleMultiplier] = useState(1);
   const [origin, setOrigin] = useState("");
   const [httpsWarning, setHttpsWarning] = useState<string>();
 
@@ -343,6 +371,10 @@ export default function ARViewer() {
   const modelLocalPosition = useMemo(
     () => addVec3(primaryStatue.position, modelOffset),
     [modelOffset, primaryStatue.position]
+  );
+  const modelScale = useMemo(
+    () => multiplyVec3(primaryStatue.scale, modelScaleMultiplier),
+    [modelScaleMultiplier, primaryStatue.scale]
   );
 
   const updateDebug = useCallback((patch: Partial<DebugState>) => {
@@ -488,6 +520,7 @@ export default function ARViewer() {
     setAssetLoaded(false);
     setTargetVisible(false);
     setModelOffset([0, 0, 0]);
+    setModelScaleMultiplier(1);
     updateDebug({
       aframeScriptLoaded: false,
       mindarScriptLoaded: false,
@@ -566,6 +599,10 @@ export default function ARViewer() {
     ]);
   }, []);
 
+  const scaleModel = useCallback((factor: number) => {
+    setModelScaleMultiplier((current) => clampScale(current * factor));
+  }, []);
+
   useEffect(() => {
     const scene = sceneRef.current;
 
@@ -588,6 +625,7 @@ export default function ARViewer() {
           modelFileUrl={modelFileUrl}
           modelLocalPosition={modelLocalPosition}
           modelOffset={modelOffset}
+          modelScale={modelScale}
           onToggle={() => setDebugExpanded((current) => !current)}
           targetFileUrl={targetFileUrl}
         />
@@ -664,7 +702,7 @@ export default function ARViewer() {
                   gltf-model={`#${statue.name}`}
                   position={vec3ToAttribute(modelLocalPosition)}
                   rotation={vec3ToAttribute(statue.rotation)}
-                  scale={vec3ToAttribute(statue.scale)}
+                  scale={vec3ToAttribute(modelScale)}
                   animation="property: rotation; to: 0 360 0; dur: 12000; easing: linear; loop: true"
                 />
                 {showTestCube ? (
@@ -688,6 +726,8 @@ export default function ARViewer() {
         modelOffset={modelOffset}
         onAdjust={adjustModelOffset}
         onReset={() => setModelOffset([0, 0, 0])}
+        onScaleDown={() => scaleModel(MODEL_SCALE_DOWN)}
+        onScaleUp={() => scaleModel(MODEL_SCALE_UP)}
         onToggleTestCube={() => setShowTestCube((current) => !current)}
         onToggle={() => setCalibrationOpen((current) => !current)}
         open={calibrationOpen}
@@ -700,6 +740,7 @@ export default function ARViewer() {
         modelFileUrl={modelFileUrl}
         modelLocalPosition={modelLocalPosition}
         modelOffset={modelOffset}
+        modelScale={modelScale}
         onToggle={() => setDebugExpanded((current) => !current)}
         targetFileUrl={targetFileUrl}
       />

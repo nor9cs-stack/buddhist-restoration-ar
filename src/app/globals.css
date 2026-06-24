@@ -126,6 +126,18 @@ a {
   font-weight: 600;
 }
 
+.model-test-button {
+  min-height: 42px;
+  margin: 0 0 10px;
+  border: 1px solid rgba(61, 37, 22, 0.75);
+  border-radius: 0;
+  background: rgba(255, 250, 242, 0.95);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  padding: 9px 14px;
+}
+
 .model-test-panel dl {
   display: grid;
   gap: 5px;

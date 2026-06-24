@@ -58,6 +58,8 @@ const MINDAR_SCRIPT_ID = "mindar-image-aframe-runtime";
 const AFRAME_SRC = "https://aframe.io/releases/1.5.0/aframe.min.js";
 const MINDAR_SRC =
   "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js";
+const SCRIPT_LOAD_TIMEOUT_MS = 10000;
+const GLB_LOAD_TIMEOUT_MS = 20000;
 const MODEL_LOAD_ERROR =
   "佛像模型未能载入。请确认 /public/models/buddha_001.glb 存在，并且已经替换为适合移动 WebAR 的优化 GLB 文件。";
 const MODEL_OFFSET_STEP = 0.05;
@@ -93,9 +95,29 @@ function waitForNextFrame() {
   });
 }
 
-function waitForScript(id: string, src: string) {
+function createTimeoutError(label: string, timeoutMs: number) {
+  return new Error(`${label} timed out after ${timeoutMs / 1000} seconds.`);
+}
+
+function waitForScript(id: string, src: string, timeoutMs: number) {
   return new Promise<void>((resolve, reject) => {
     const existing = document.getElementById(id) as HTMLScriptElement | null;
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      callback();
+    };
 
     if (existing?.dataset.loaded === "true") {
       resolve();
@@ -117,7 +139,7 @@ function waitForScript(id: string, src: string) {
       "load",
       () => {
         script.dataset.loaded = "true";
-        resolve();
+        finish(resolve);
       },
       { once: true }
     );
@@ -126,7 +148,7 @@ function waitForScript(id: string, src: string) {
       "error",
       () => {
         script.dataset.failed = "true";
-        reject(new Error(`Unable to load ${src}`));
+        finish(() => reject(new Error(`Unable to load ${src}`)));
       },
       { once: true }
     );
@@ -134,6 +156,11 @@ function waitForScript(id: string, src: string) {
     if (!existing) {
       document.head.appendChild(script);
     }
+
+    timeoutId = setTimeout(() => {
+      const label = id === MINDAR_SCRIPT_ID ? "MindAR load" : "A-Frame load";
+      finish(() => reject(createTimeoutError(label, timeoutMs)));
+    }, timeoutMs);
   });
 }
 
@@ -339,6 +366,7 @@ export default function ARViewer() {
   const assetRefs = useRef<Map<string, HTMLElement>>(new Map());
   const anchorRefs = useRef<Map<string, HTMLElement>>(new Map());
   const modelRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const modelFinishedRef = useRef(false);
   const [runtimeState, setRuntimeState] = useState<RuntimeState>("idle");
   const [message, setMessage] = useState<string>();
   const [sceneEnabled, setSceneEnabled] = useState(false);
@@ -446,6 +474,7 @@ export default function ARViewer() {
 
     const assets = Array.from(assetRefs.current.values());
     const models = Array.from(modelRefs.current.values());
+    modelFinishedRef.current = false;
 
     const logEvent = (eventName: string, event: Event) => {
       console.log(`[AR Debug] ${eventName}`, event);
@@ -463,12 +492,14 @@ export default function ARViewer() {
 
     const handleModelLoaded = (event: Event) => {
       logEvent("model-loaded", event);
+      modelFinishedRef.current = true;
       setAssetLoaded(true);
       updateDebug({ modelLoaded: true, modelLoadFailed: false });
     };
 
     const handleModelError = (event: Event) => {
       logEvent("model-error", event);
+      modelFinishedRef.current = true;
       setAssetLoaded(false);
       updateDebug({ modelLoaded: false, modelLoadFailed: true });
       setRuntimeState("error");
@@ -497,7 +528,24 @@ export default function ARViewer() {
       model.addEventListener("object3dremove", handleObject3DRemove);
     });
 
+    const timeoutId = setTimeout(() => {
+      if (modelFinishedRef.current) {
+        return;
+      }
+
+      const timeoutMessage = createTimeoutError(
+        "GLB load",
+        GLB_LOAD_TIMEOUT_MS
+      ).message;
+      console.error("[AR Debug] GLB load timed out");
+      setAssetLoaded(false);
+      updateDebug({ modelLoaded: false, modelLoadFailed: true });
+      setRuntimeState("error");
+      setMessage(timeoutMessage);
+    }, GLB_LOAD_TIMEOUT_MS);
+
     return () => {
+      clearTimeout(timeoutId);
       assets.forEach((asset) => {
         asset.removeEventListener("loaded", handleAssetLoaded);
         asset.removeEventListener("error", handleAssetError);
@@ -539,10 +587,18 @@ export default function ARViewer() {
     });
 
     try {
-      await waitForScript(AFRAME_SCRIPT_ID, AFRAME_SRC);
+      await waitForScript(
+        AFRAME_SCRIPT_ID,
+        AFRAME_SRC,
+        SCRIPT_LOAD_TIMEOUT_MS
+      );
       updateDebug({ aframeScriptLoaded: true });
 
-      await waitForScript(MINDAR_SCRIPT_ID, MINDAR_SRC);
+      await waitForScript(
+        MINDAR_SCRIPT_ID,
+        MINDAR_SRC,
+        SCRIPT_LOAD_TIMEOUT_MS
+      );
       updateDebug({ mindarScriptLoaded: true });
 
       setMessage("正在检查佛像模型文件");

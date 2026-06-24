@@ -16,6 +16,8 @@ type ModelTestState = {
 const AFRAME_SCRIPT_ID = "aframe-runtime";
 const AFRAME_SRC = "https://aframe.io/releases/1.5.0/aframe.min.js";
 const MODEL_URL = "/models/buddha_001.glb";
+const AFRAME_LOAD_TIMEOUT_MS = 10000;
+const GLB_LOAD_TIMEOUT_MS = 20000;
 
 const initialState: ModelTestState = {
   aframeLoaded: false,
@@ -43,9 +45,29 @@ type AFrameModelElement = HTMLElement & {
   };
 };
 
-function waitForScript(id: string, src: string) {
+function createTimeoutError(label: string, timeoutMs: number) {
+  return new Error(`${label} timed out after ${timeoutMs / 1000} seconds.`);
+}
+
+function waitForScript(id: string, src: string, timeoutMs: number) {
   return new Promise<void>((resolve, reject) => {
     const existing = document.getElementById(id) as HTMLScriptElement | null;
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      callback();
+    };
 
     if (existing?.dataset.loaded === "true") {
       resolve();
@@ -67,7 +89,7 @@ function waitForScript(id: string, src: string) {
       "load",
       () => {
         script.dataset.loaded = "true";
-        resolve();
+        finish(resolve);
       },
       { once: true }
     );
@@ -76,7 +98,7 @@ function waitForScript(id: string, src: string) {
       "error",
       () => {
         script.dataset.failed = "true";
-        reject(new Error(`Unable to load ${src}`));
+        finish(() => reject(new Error(`Unable to load ${src}`)));
       },
       { once: true }
     );
@@ -84,6 +106,10 @@ function waitForScript(id: string, src: string) {
     if (!existing) {
       document.head.appendChild(script);
     }
+
+    timeoutId = setTimeout(() => {
+      finish(() => reject(createTimeoutError("A-Frame load", timeoutMs)));
+    }, timeoutMs);
   });
 }
 
@@ -143,6 +169,9 @@ function autoFitModel(model: AFrameModelElement) {
 
 export default function ModelTestViewer() {
   const modelRef = useRef<HTMLElement | null>(null);
+  const modelLoadedRef = useRef(false);
+  const modelFailedRef = useRef(false);
+  const [started, setStarted] = useState(false);
   const [ready, setReady] = useState(false);
   const [state, setState] = useState<ModelTestState>(initialState);
 
@@ -164,7 +193,11 @@ export default function ModelTestViewer() {
   useEffect(() => {
     let cancelled = false;
 
-    waitForScript(AFRAME_SCRIPT_ID, AFRAME_SRC)
+    if (!started) {
+      return;
+    }
+
+    waitForScript(AFRAME_SCRIPT_ID, AFRAME_SRC, AFRAME_LOAD_TIMEOUT_MS)
       .then(() => {
         if (cancelled) {
           return;
@@ -175,13 +208,16 @@ export default function ModelTestViewer() {
       })
       .catch((error) => {
         console.error("[Model Test] A-Frame script failed", error);
-        updateState({ lastEvent: "A-Frame script failed" });
+        updateState({
+          lastEvent:
+            error instanceof Error ? error.message : "A-Frame script failed"
+        });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [updateState]);
+  }, [started, updateState]);
 
   useEffect(() => {
     const model = modelRef.current;
@@ -190,12 +226,16 @@ export default function ModelTestViewer() {
       return;
     }
 
+    modelLoadedRef.current = false;
+    modelFailedRef.current = false;
+
     const logEvent = (name: string, event: Event) => {
       console.log(`[Model Test] ${name}`, event);
     };
 
     const handleModelLoaded = (event: Event) => {
       logEvent("model-loaded", event);
+      modelLoadedRef.current = true;
       const fit = autoFitModel(model);
       updateState({
         appliedScale: formatNumber(fit.appliedScale),
@@ -208,6 +248,7 @@ export default function ModelTestViewer() {
 
     const handleModelError = (event: Event) => {
       logEvent("model-error", event);
+      modelFailedRef.current = true;
       updateState({
         lastEvent: "model-error",
         modelLoaded: false,
@@ -237,7 +278,21 @@ export default function ModelTestViewer() {
     model.addEventListener("object3dset", handleObject3DSet);
     model.addEventListener("object3dremove", handleObject3DRemove);
 
+    const timeoutId = setTimeout(() => {
+      if (modelLoadedRef.current || modelFailedRef.current) {
+        return;
+      }
+
+      console.error("[Model Test] GLB load timed out");
+      updateState({
+        lastEvent: createTimeoutError("GLB load", GLB_LOAD_TIMEOUT_MS).message,
+        modelLoaded: false,
+        modelError: true
+      });
+    }, GLB_LOAD_TIMEOUT_MS);
+
     return () => {
+      clearTimeout(timeoutId);
       model.removeEventListener("model-loaded", handleModelLoaded);
       model.removeEventListener("model-error", handleModelError);
       model.removeEventListener("object3dset", handleObject3DSet);
@@ -261,6 +316,18 @@ export default function ModelTestViewer() {
     <main className="model-test-page">
       <section className="model-test-panel" aria-label="Model test diagnostics">
         <h1>Model Test</h1>
+        {!started ? (
+          <button
+            className="model-test-button"
+            type="button"
+            onClick={() => {
+              updateState({ lastEvent: "loading requested" });
+              setStarted(true);
+            }}
+          >
+            加载模型
+          </button>
+        ) : null}
         <dl>
           {rows.map(([label, value]) => (
             <div key={label}>
@@ -271,7 +338,7 @@ export default function ModelTestViewer() {
         </dl>
       </section>
 
-      {ready ? (
+      {started && ready ? (
         <a-scene
           class="model-test-scene"
           background="color: #d9c5a7"
@@ -289,8 +356,10 @@ export default function ModelTestViewer() {
           />
           <a-camera position="0 0 0" />
         </a-scene>
-      ) : (
+      ) : started ? (
         <div className="model-test-loading">Loading A-Frame...</div>
+      ) : (
+        <div className="model-test-loading">点击“加载模型”开始测试</div>
       )}
     </main>
   );

@@ -17,48 +17,6 @@ type AFrameScene = HTMLElement & {
   };
 };
 
-type StabilizerComponent = {
-  data: {
-    positionAlpha: number;
-    rotationAlpha: number;
-    scaleAlpha: number;
-    snapDistance: number;
-  };
-  el: HTMLElement & {
-    object3D?: {
-      visible: boolean;
-      position: {
-        copy: (value: unknown) => unknown;
-        clone: () => {
-          distanceTo: (value: unknown) => number;
-        };
-      };
-      quaternion: {
-        copy: (value: unknown) => unknown;
-        clone: () => unknown;
-      };
-      scale: {
-        copy: (value: unknown) => unknown;
-        clone: () => unknown;
-      };
-    };
-  };
-  hasSmoothedPose: boolean;
-  smoothedPosition?: {
-    copy: (value: unknown) => unknown;
-    distanceTo: (value: unknown) => number;
-    lerp: (value: unknown, alpha: number) => unknown;
-  };
-  smoothedQuaternion?: {
-    copy: (value: unknown) => unknown;
-    slerp: (value: unknown, alpha: number) => unknown;
-  };
-  smoothedScale?: {
-    copy: (value: unknown) => unknown;
-    lerp: (value: unknown, alpha: number) => unknown;
-  };
-};
-
 type DebugState = {
   componentMounted: boolean;
   aframeScriptLoaded: boolean;
@@ -107,87 +65,6 @@ function addVec3([ax, ay, az]: Vec3, [bx, by, bz]: Vec3): Vec3 {
 
 function clampOffset(value: number) {
   return Math.max(-MODEL_OFFSET_LIMIT, Math.min(MODEL_OFFSET_LIMIT, value));
-}
-
-function registerImageTargetStabilizer() {
-  const win = window as typeof window & {
-    AFRAME?: {
-      components?: Record<string, unknown>;
-      registerComponent: (name: string, definition: unknown) => void;
-    };
-    THREE?: {
-      Vector3: new () => {
-        copy: (value: unknown) => unknown;
-        clone: () => unknown;
-        distanceTo: (value: unknown) => number;
-        lerp: (value: unknown, alpha: number) => unknown;
-      };
-      Quaternion: new () => {
-        copy: (value: unknown) => unknown;
-        clone: () => unknown;
-        slerp: (value: unknown, alpha: number) => unknown;
-      };
-    };
-  };
-
-  if (!win.AFRAME || win.AFRAME.components?.["image-target-stabilizer"]) {
-    return;
-  }
-
-  win.AFRAME.registerComponent("image-target-stabilizer", {
-    schema: {
-      positionAlpha: { default: 0.25 },
-      rotationAlpha: { default: 0.22 },
-      scaleAlpha: { default: 0.25 },
-      snapDistance: { default: 0.55 }
-    },
-
-    init: function init(this: StabilizerComponent) {
-      const THREE = win.THREE;
-
-      this.hasSmoothedPose = false;
-      this.smoothedPosition = THREE ? new THREE.Vector3() : undefined;
-      this.smoothedQuaternion = THREE ? new THREE.Quaternion() : undefined;
-      this.smoothedScale = THREE ? new THREE.Vector3() : undefined;
-    },
-
-    tick: function tick(this: StabilizerComponent) {
-      const object3D = this.el.object3D;
-
-      if (
-        !object3D ||
-        !object3D.visible ||
-        !this.smoothedPosition ||
-        !this.smoothedQuaternion ||
-        !this.smoothedScale
-      ) {
-        this.hasSmoothedPose = false;
-        return;
-      }
-
-      const rawPosition = object3D.position.clone();
-      const rawQuaternion = object3D.quaternion.clone();
-      const rawScale = object3D.scale.clone();
-
-      if (
-        !this.hasSmoothedPose ||
-        rawPosition.distanceTo(this.smoothedPosition) > this.data.snapDistance
-      ) {
-        this.smoothedPosition.copy(rawPosition);
-        this.smoothedQuaternion.copy(rawQuaternion);
-        this.smoothedScale.copy(rawScale);
-        this.hasSmoothedPose = true;
-      } else {
-        this.smoothedPosition.lerp(rawPosition, this.data.positionAlpha);
-        this.smoothedQuaternion.slerp(rawQuaternion, this.data.rotationAlpha);
-        this.smoothedScale.lerp(rawScale, this.data.scaleAlpha);
-      }
-
-      object3D.position.copy(this.smoothedPosition);
-      object3D.quaternion.copy(this.smoothedQuaternion);
-      object3D.scale.copy(this.smoothedScale);
-    }
-  });
 }
 
 function waitForNextFrame() {
@@ -283,6 +160,7 @@ function DebugPanel({
   targetFileUrl,
   modelFileUrl,
   modelOffset,
+  modelLocalPosition,
   expanded,
   onToggle
 }: {
@@ -290,6 +168,7 @@ function DebugPanel({
   targetFileUrl: string;
   modelFileUrl: string;
   modelOffset: Vec3;
+  modelLocalPosition: Vec3;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -316,7 +195,8 @@ function DebugPanel({
     ["model loaded", debug.modelLoaded ? "yes" : "no"],
     ["model load failed", debug.modelLoadFailed ? "yes" : "no"],
     ["model locked", debug.modelLocked ? "yes" : "no"],
-    ["current offset", vec3ToAttribute(modelOffset)]
+    ["current offset", vec3ToAttribute(modelOffset)],
+    ["actual model local position", vec3ToAttribute(modelLocalPosition)]
   ];
 
   return (
@@ -433,6 +313,10 @@ export default function ARViewer() {
     () =>
       origin ? new URL(primaryStatue.modelUrl, origin).href : primaryStatue.modelUrl,
     [origin, primaryStatue.modelUrl]
+  );
+  const modelLocalPosition = useMemo(
+    () => addVec3(primaryStatue.position, modelOffset),
+    [modelOffset, primaryStatue.position]
   );
 
   const updateDebug = useCallback((patch: Partial<DebugState>) => {
@@ -552,7 +436,6 @@ export default function ARViewer() {
 
     try {
       await waitForScript(AFRAME_SCRIPT_ID, AFRAME_SRC);
-      registerImageTargetStabilizer();
       updateDebug({ aframeScriptLoaded: true });
 
       await waitForScript(MINDAR_SCRIPT_ID, MINDAR_SRC);
@@ -632,6 +515,7 @@ export default function ARViewer() {
           debug={debug}
           expanded={debugExpanded}
           modelFileUrl={modelFileUrl}
+          modelLocalPosition={modelLocalPosition}
           modelOffset={modelOffset}
           onToggle={() => setDebugExpanded((current) => !current)}
           targetFileUrl={targetFileUrl}
@@ -688,11 +572,10 @@ export default function ARViewer() {
                   }
                 }}
                 data-ar-anchor={anchorKey}
-                image-target-stabilizer="positionAlpha: 0.25; rotationAlpha: 0.22; scaleAlpha: 0.25; snapDistance: 0.55"
                 mindar-image-target={`targetIndex: ${statue.targetIndex}`}
-                visible={targetVisible ? "true" : "false"}
               >
-                <a-gltf-model
+                <a-entity
+                  id="buddha-model"
                   ref={(element) => {
                     if (element) {
                       modelRefs.current.set(anchorKey, element);
@@ -700,8 +583,8 @@ export default function ARViewer() {
                       modelRefs.current.delete(anchorKey);
                     }
                   }}
-                  src={`#${statue.name}`}
-                  position={vec3ToAttribute(addVec3(statue.position, modelOffset))}
+                  gltf-model={`#${statue.name}`}
+                  position={vec3ToAttribute(modelLocalPosition)}
                   rotation={vec3ToAttribute(statue.rotation)}
                   scale={vec3ToAttribute(statue.scale)}
                   animation="property: rotation; to: 0 360 0; dur: 12000; easing: linear; loop: true"
@@ -726,6 +609,7 @@ export default function ARViewer() {
         debug={debug}
         expanded={debugExpanded}
         modelFileUrl={modelFileUrl}
+        modelLocalPosition={modelLocalPosition}
         modelOffset={modelOffset}
         onToggle={() => setDebugExpanded((current) => !current)}
         targetFileUrl={targetFileUrl}

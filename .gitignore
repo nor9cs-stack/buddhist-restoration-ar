@@ -1,0 +1,13 @@
+.next/
+node_modules/
+out/
+dist/
+.env*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+dev-server*.log
+
+# Temporary: keep oversized exported GLB files out of Git while optimizing for WebAR.
+public/models/*.glb

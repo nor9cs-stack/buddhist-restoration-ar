@@ -1,0 +1,210 @@
+:root {
+  --paper: #d9c5a7;
+  --paper-soft: #eadcc6;
+  --ink: #3d2516;
+  --ink-muted: #6f5338;
+  --gold: #9c6b24;
+  --gold-soft: #c8943a;
+  --error: #7f1d1d;
+  --white: #fffaf2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family:
+    ui-serif,
+    "Songti SC",
+    "Noto Serif CJK SC",
+    "Times New Roman",
+    serif;
+}
+
+body {
+  overflow: hidden;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.museum-page {
+  position: relative;
+  min-height: 100svh;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 242, 0.5), rgba(255, 250, 242, 0)),
+    var(--paper);
+}
+
+.museum-frame {
+  position: absolute;
+  inset: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  border: 2px solid var(--ink);
+  pointer-events: none;
+}
+
+.ar-stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #0b0907;
+}
+
+.ar-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  pointer-events: none;
+}
+
+.ar-status {
+  max-width: min(86vw, 360px);
+  border: 1px solid rgba(61, 37, 22, 0.62);
+  background: rgba(234, 220, 198, 0.88);
+  color: var(--ink);
+  padding: 14px 16px;
+  text-align: center;
+  line-height: 1.55;
+  backdrop-filter: blur(10px);
+}
+
+.ar-status strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.96rem;
+}
+
+.ar-status p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+
+.ar-status.error {
+  border-color: rgba(127, 29, 29, 0.55);
+  color: var(--error);
+}
+
+.debug-panel {
+  position: fixed;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  z-index: 20;
+  color: var(--ink);
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    "Liberation Mono",
+    monospace;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  text-align: left;
+  pointer-events: auto;
+}
+
+.debug-panel--expanded {
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
+  width: auto;
+  max-height: 35svh;
+  overflow-y: auto;
+  border: 1px solid rgba(61, 37, 22, 0.72);
+  background: rgba(255, 250, 242, 0.9);
+  padding: 10px 12px;
+  backdrop-filter: blur(10px);
+}
+
+.debug-panel--collapsed {
+  width: auto;
+}
+
+.debug-panel__toggle {
+  min-width: 68px;
+  min-height: 36px;
+  border: 1px solid rgba(61, 37, 22, 0.72);
+  border-radius: 0;
+  background: rgba(255, 250, 242, 0.9);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 8px 12px;
+}
+
+.debug-panel--expanded .debug-panel__toggle {
+  margin-bottom: 8px;
+}
+
+.debug-panel__content {
+  overflow: visible;
+}
+
+.debug-panel__content strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink);
+  font-family:
+    ui-serif,
+    "Songti SC",
+    "Noto Serif CJK SC",
+    "Times New Roman",
+    serif;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.debug-panel__content dl {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.debug-panel__content div {
+  display: grid;
+  grid-template-columns: minmax(106px, 42%) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.debug-panel__content dt {
+  color: var(--ink-muted);
+}
+
+.debug-panel__content dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 768px) {
+  .debug-panel {
+    top: max(16px, env(safe-area-inset-top));
+    bottom: auto;
+    left: max(16px, env(safe-area-inset-left));
+    right: auto;
+    z-index: 30;
+  }
+
+  .debug-panel--expanded {
+    width: min(380px, calc(100vw - 32px));
+    max-height: min(70svh, 560px);
+  }
+}
+
+a-scene {
+  width: 100vw;
+  height: 100svh;
+}

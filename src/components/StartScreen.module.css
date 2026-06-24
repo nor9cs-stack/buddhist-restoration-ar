@@ -1,0 +1,70 @@
+.center {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100svh;
+  padding: 40px 24px max(132px, calc(env(safe-area-inset-bottom) + 96px));
+  text-align: center;
+}
+
+.kicker {
+  margin: 0 0 10px;
+  color: var(--ink-muted);
+  font-size: clamp(0.78rem, 2.8vw, 0.95rem);
+  letter-spacing: 0;
+}
+
+.title {
+  margin: 0 0 34px;
+  color: var(--ink);
+  font-size: clamp(2.1rem, 13vw, 5.4rem);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.startButton {
+  position: relative;
+  z-index: 40;
+  align-self: center;
+  min-width: 156px;
+  min-height: 52px;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: rgba(255, 250, 242, 0.62);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.08rem;
+  letter-spacing: 0;
+  opacity: 0;
+  padding: 12px 24px;
+  transform: translateY(10px);
+  animation: fadeInButton 900ms ease 300ms forwards;
+}
+
+.startButton:active {
+  background: rgba(201, 148, 58, 0.28);
+}
+
+.startButton:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.message {
+  max-width: 280px;
+  margin: 16px auto 0;
+  color: var(--ink-muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+@keyframes fadeInButton {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

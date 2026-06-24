@@ -14,9 +14,9 @@ export const imageTargetSrc = "/targets/buddha_targets.mind";
 export const statues: StatueConfig[] = [
   {
     name: "buddha_001",
-    modelUrl: "/models/buddha_001.glb",
+    modelUrl: "/models/test_cube.glb",
     targetIndex: 0,
-    scale: [0.01, 0.01, 0.01],
+    scale: [0.2, 0.2, 0.2],
     position: [0, 0, 0],
     rotation: [0, 0, 0]
   }

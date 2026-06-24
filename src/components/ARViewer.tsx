@@ -28,6 +28,10 @@ type DebugState = {
   targetLost: boolean;
   modelLoaded: boolean;
   modelLoadFailed: boolean;
+  gltfAssetLoaded: boolean;
+  gltfAssetFailed: boolean;
+  object3DAttached: boolean;
+  object3DRemoved: boolean;
   modelLocked: boolean;
 };
 
@@ -42,6 +46,10 @@ const initialDebugState: DebugState = {
   targetLost: false,
   modelLoaded: false,
   modelLoadFailed: false,
+  gltfAssetLoaded: false,
+  gltfAssetFailed: false,
+  object3DAttached: false,
+  object3DRemoved: false,
   modelLocked: false
 };
 
@@ -194,6 +202,10 @@ function DebugPanel({
     ["target lost", debug.targetLost ? "yes" : "no"],
     ["model loaded", debug.modelLoaded ? "yes" : "no"],
     ["model load failed", debug.modelLoadFailed ? "yes" : "no"],
+    ["gltf asset loaded", debug.gltfAssetLoaded ? "yes" : "no"],
+    ["gltf asset failed", debug.gltfAssetFailed ? "yes" : "no"],
+    ["object3D attached", debug.object3DAttached ? "yes" : "no"],
+    ["object3D removed", debug.object3DRemoved ? "yes" : "no"],
     ["model locked", debug.modelLocked ? "yes" : "no"],
     ["current offset", vec3ToAttribute(modelOffset)],
     ["actual model local position", vec3ToAttribute(modelLocalPosition)]
@@ -230,14 +242,18 @@ function DebugPanel({
 function CalibrationControls({
   modelOffset,
   open,
+  showTestCube,
   onAdjust,
   onReset,
+  onToggleTestCube,
   onToggle
 }: {
   modelOffset: Vec3;
   open: boolean;
+  showTestCube: boolean;
   onAdjust: (delta: Vec3) => void;
   onReset: () => void;
+  onToggleTestCube: () => void;
   onToggle: () => void;
 }) {
   return (
@@ -247,6 +263,14 @@ function CalibrationControls({
     >
       <button className="calibration-toggle" type="button" onClick={onToggle}>
         {open ? "隐藏调整" : "调整位置"}
+      </button>
+      <button
+        className="calibration-toggle"
+        type="button"
+        onClick={onToggleTestCube}
+        aria-pressed={showTestCube}
+      >
+        Show Test Cube
       </button>
 
       {open ? (
@@ -285,6 +309,7 @@ function CalibrationControls({
 
 export default function ARViewer() {
   const sceneRef = useRef<AFrameScene | null>(null);
+  const assetRefs = useRef<Map<string, HTMLElement>>(new Map());
   const anchorRefs = useRef<Map<string, HTMLElement>>(new Map());
   const modelRefs = useRef<Map<string, HTMLElement>>(new Map());
   const [runtimeState, setRuntimeState] = useState<RuntimeState>("idle");
@@ -295,6 +320,7 @@ export default function ARViewer() {
   const [debug, setDebug] = useState<DebugState>(initialDebugState);
   const [debugExpanded, setDebugExpanded] = useState(false);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
+  const [showTestCube, setShowTestCube] = useState(false);
   const [modelOffset, setModelOffset] = useState<Vec3>([0, 0, 0]);
   const [origin, setOrigin] = useState("");
   const [httpsWarning, setHttpsWarning] = useState<string>();
@@ -386,29 +412,70 @@ export default function ARViewer() {
       return;
     }
 
+    const assets = Array.from(assetRefs.current.values());
     const models = Array.from(modelRefs.current.values());
 
-    const handleModelLoaded = () => {
+    const logEvent = (eventName: string, event: Event) => {
+      console.log(`[AR Debug] ${eventName}`, event);
+    };
+
+    const handleAssetLoaded = (event: Event) => {
+      logEvent("gltf asset loaded", event);
+      updateDebug({ gltfAssetLoaded: true, gltfAssetFailed: false });
+    };
+
+    const handleAssetError = (event: Event) => {
+      logEvent("gltf asset failed", event);
+      updateDebug({ gltfAssetLoaded: false, gltfAssetFailed: true });
+    };
+
+    const handleModelLoaded = (event: Event) => {
+      logEvent("model-loaded", event);
       setAssetLoaded(true);
       updateDebug({ modelLoaded: true, modelLoadFailed: false });
     };
 
-    const handleModelError = () => {
+    const handleModelError = (event: Event) => {
+      logEvent("model-error", event);
       setAssetLoaded(false);
       updateDebug({ modelLoaded: false, modelLoadFailed: true });
       setRuntimeState("error");
       setMessage(MODEL_LOAD_ERROR);
     };
 
+    const handleObject3DSet = (event: Event) => {
+      logEvent("object3dset", event);
+      updateDebug({ object3DAttached: true, object3DRemoved: false });
+    };
+
+    const handleObject3DRemove = (event: Event) => {
+      logEvent("object3dremove", event);
+      updateDebug({ object3DRemoved: true });
+    };
+
+    assets.forEach((asset) => {
+      asset.addEventListener("loaded", handleAssetLoaded);
+      asset.addEventListener("error", handleAssetError);
+    });
+
     models.forEach((model) => {
       model.addEventListener("model-loaded", handleModelLoaded);
       model.addEventListener("model-error", handleModelError);
+      model.addEventListener("object3dset", handleObject3DSet);
+      model.addEventListener("object3dremove", handleObject3DRemove);
     });
 
     return () => {
+      assets.forEach((asset) => {
+        asset.removeEventListener("loaded", handleAssetLoaded);
+        asset.removeEventListener("error", handleAssetError);
+      });
+
       models.forEach((model) => {
         model.removeEventListener("model-loaded", handleModelLoaded);
         model.removeEventListener("model-error", handleModelError);
+        model.removeEventListener("object3dset", handleObject3DSet);
+        model.removeEventListener("object3dremove", handleObject3DRemove);
       });
     };
   }, [sceneEnabled, updateDebug]);
@@ -431,6 +498,10 @@ export default function ARViewer() {
       targetLost: false,
       modelLoaded: false,
       modelLoadFailed: false,
+      gltfAssetLoaded: false,
+      gltfAssetFailed: false,
+      object3DAttached: false,
+      object3DRemoved: false,
       modelLocked: false
     });
 
@@ -553,6 +624,13 @@ export default function ARViewer() {
         >
           <a-assets>
             <a-asset-item
+              ref={(element) => {
+                if (element) {
+                  assetRefs.current.set(primaryStatue.name, element);
+                } else {
+                  assetRefs.current.delete(primaryStatue.name);
+                }
+              }}
               id={primaryStatue.name}
               src={primaryStatue.modelUrl}
             />
@@ -589,6 +667,15 @@ export default function ARViewer() {
                   scale={vec3ToAttribute(statue.scale)}
                   animation="property: rotation; to: 0 360 0; dur: 12000; easing: linear; loop: true"
                 />
+                {showTestCube ? (
+                  <a-box
+                    position="0 0 0"
+                    depth="0.1"
+                    height="0.1"
+                    width="0.1"
+                    color="red"
+                  />
+                ) : null}
               </a-entity>
             );
           })}
@@ -601,8 +688,10 @@ export default function ARViewer() {
         modelOffset={modelOffset}
         onAdjust={adjustModelOffset}
         onReset={() => setModelOffset([0, 0, 0])}
+        onToggleTestCube={() => setShowTestCube((current) => !current)}
         onToggle={() => setCalibrationOpen((current) => !current)}
         open={calibrationOpen}
+        showTestCube={showTestCube}
       />
 
       <DebugPanel

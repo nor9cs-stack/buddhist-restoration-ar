@@ -16,6 +16,7 @@ declare module "react" {
       "a-camera": AFrameElementProps;
       "a-entity": AFrameElementProps;
       "a-gltf-model": AFrameElementProps;
+      "a-box": AFrameElementProps;
     }
   }
 }
@@ -29,6 +30,7 @@ declare global {
       "a-camera": AFrameElementProps;
       "a-entity": AFrameElementProps;
       "a-gltf-model": AFrameElementProps;
+      "a-box": AFrameElementProps;
     }
   }
 }

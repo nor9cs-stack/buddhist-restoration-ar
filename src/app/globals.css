@@ -98,6 +98,63 @@ a {
   color: var(--error);
 }
 
+.calibration-panel {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
+  z-index: 35;
+  display: grid;
+  gap: 8px;
+  max-width: min(220px, calc(100vw - 28px));
+  pointer-events: auto;
+}
+
+.calibration-toggle,
+.calibration-grid button,
+.calibration-reset {
+  min-height: 38px;
+  border: 1px solid rgba(61, 37, 22, 0.75);
+  border-radius: 0;
+  background: rgba(255, 250, 242, 0.9);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 8px 12px;
+}
+
+.calibration-controls {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(61, 37, 22, 0.72);
+  background: rgba(234, 220, 198, 0.92);
+  padding: 10px;
+  backdrop-filter: blur(10px);
+}
+
+.calibration-offset {
+  color: var(--ink-muted);
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    "Liberation Mono",
+    monospace;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.calibration-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(72px, 1fr));
+  gap: 6px;
+}
+
+.calibration-reset {
+  width: 100%;
+}
+
 .debug-panel {
   position: fixed;
   right: max(12px, env(safe-area-inset-right));

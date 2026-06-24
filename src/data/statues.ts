@@ -16,8 +16,8 @@ export const statues: StatueConfig[] = [
     name: "buddha_001",
     modelUrl: "/models/buddha_001.glb",
     targetIndex: 0,
-    scale: [0.35, 0.35, 0.35],
-    position: [0, -0.25, 0],
+    scale: [0.15, 0.15, 0.15],
+    position: [0, 0, 0],
     rotation: [0, 0, 0]
   }
 

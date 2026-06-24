@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import StartScreen from "./StartScreen";
 import { imageTargetSrc, statues } from "@/data/statues";
+import type { Vec3 } from "@/data/statues";
 
 type RuntimeState = "idle" | "loading" | "running" | "error";
 
@@ -13,6 +14,48 @@ type AFrameScene = HTMLElement & {
       start: () => Promise<void>;
       stop: () => void;
     };
+  };
+};
+
+type StabilizerComponent = {
+  data: {
+    positionAlpha: number;
+    rotationAlpha: number;
+    scaleAlpha: number;
+    snapDistance: number;
+  };
+  el: HTMLElement & {
+    object3D?: {
+      visible: boolean;
+      position: {
+        copy: (value: unknown) => unknown;
+        clone: () => {
+          distanceTo: (value: unknown) => number;
+        };
+      };
+      quaternion: {
+        copy: (value: unknown) => unknown;
+        clone: () => unknown;
+      };
+      scale: {
+        copy: (value: unknown) => unknown;
+        clone: () => unknown;
+      };
+    };
+  };
+  hasSmoothedPose: boolean;
+  smoothedPosition?: {
+    copy: (value: unknown) => unknown;
+    distanceTo: (value: unknown) => number;
+    lerp: (value: unknown, alpha: number) => unknown;
+  };
+  smoothedQuaternion?: {
+    copy: (value: unknown) => unknown;
+    slerp: (value: unknown, alpha: number) => unknown;
+  };
+  smoothedScale?: {
+    copy: (value: unknown) => unknown;
+    lerp: (value: unknown, alpha: number) => unknown;
   };
 };
 
@@ -27,6 +70,7 @@ type DebugState = {
   targetLost: boolean;
   modelLoaded: boolean;
   modelLoadFailed: boolean;
+  modelLocked: boolean;
 };
 
 const initialDebugState: DebugState = {
@@ -39,7 +83,8 @@ const initialDebugState: DebugState = {
   targetFound: false,
   targetLost: false,
   modelLoaded: false,
-  modelLoadFailed: false
+  modelLoadFailed: false,
+  modelLocked: false
 };
 
 const AFRAME_SCRIPT_ID = "aframe-runtime";
@@ -49,9 +94,100 @@ const MINDAR_SRC =
   "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js";
 const MODEL_LOAD_ERROR =
   "佛像模型未能载入。请确认 /public/models/buddha_001.glb 存在，并且已经替换为适合移动 WebAR 的优化 GLB 文件。";
+const MODEL_OFFSET_STEP = 0.05;
+const MODEL_OFFSET_LIMIT = 1;
 
 function vec3ToAttribute([x, y, z]: [number, number, number]) {
   return `${x} ${y} ${z}`;
+}
+
+function addVec3([ax, ay, az]: Vec3, [bx, by, bz]: Vec3): Vec3 {
+  return [ax + bx, ay + by, az + bz];
+}
+
+function clampOffset(value: number) {
+  return Math.max(-MODEL_OFFSET_LIMIT, Math.min(MODEL_OFFSET_LIMIT, value));
+}
+
+function registerImageTargetStabilizer() {
+  const win = window as typeof window & {
+    AFRAME?: {
+      components?: Record<string, unknown>;
+      registerComponent: (name: string, definition: unknown) => void;
+    };
+    THREE?: {
+      Vector3: new () => {
+        copy: (value: unknown) => unknown;
+        clone: () => unknown;
+        distanceTo: (value: unknown) => number;
+        lerp: (value: unknown, alpha: number) => unknown;
+      };
+      Quaternion: new () => {
+        copy: (value: unknown) => unknown;
+        clone: () => unknown;
+        slerp: (value: unknown, alpha: number) => unknown;
+      };
+    };
+  };
+
+  if (!win.AFRAME || win.AFRAME.components?.["image-target-stabilizer"]) {
+    return;
+  }
+
+  win.AFRAME.registerComponent("image-target-stabilizer", {
+    schema: {
+      positionAlpha: { default: 0.25 },
+      rotationAlpha: { default: 0.22 },
+      scaleAlpha: { default: 0.25 },
+      snapDistance: { default: 0.55 }
+    },
+
+    init: function init(this: StabilizerComponent) {
+      const THREE = win.THREE;
+
+      this.hasSmoothedPose = false;
+      this.smoothedPosition = THREE ? new THREE.Vector3() : undefined;
+      this.smoothedQuaternion = THREE ? new THREE.Quaternion() : undefined;
+      this.smoothedScale = THREE ? new THREE.Vector3() : undefined;
+    },
+
+    tick: function tick(this: StabilizerComponent) {
+      const object3D = this.el.object3D;
+
+      if (
+        !object3D ||
+        !object3D.visible ||
+        !this.smoothedPosition ||
+        !this.smoothedQuaternion ||
+        !this.smoothedScale
+      ) {
+        this.hasSmoothedPose = false;
+        return;
+      }
+
+      const rawPosition = object3D.position.clone();
+      const rawQuaternion = object3D.quaternion.clone();
+      const rawScale = object3D.scale.clone();
+
+      if (
+        !this.hasSmoothedPose ||
+        rawPosition.distanceTo(this.smoothedPosition) > this.data.snapDistance
+      ) {
+        this.smoothedPosition.copy(rawPosition);
+        this.smoothedQuaternion.copy(rawQuaternion);
+        this.smoothedScale.copy(rawScale);
+        this.hasSmoothedPose = true;
+      } else {
+        this.smoothedPosition.lerp(rawPosition, this.data.positionAlpha);
+        this.smoothedQuaternion.slerp(rawQuaternion, this.data.rotationAlpha);
+        this.smoothedScale.lerp(rawScale, this.data.scaleAlpha);
+      }
+
+      object3D.position.copy(this.smoothedPosition);
+      object3D.quaternion.copy(this.smoothedQuaternion);
+      object3D.scale.copy(this.smoothedScale);
+    }
+  });
 }
 
 function waitForNextFrame() {
@@ -146,12 +282,14 @@ function DebugPanel({
   debug,
   targetFileUrl,
   modelFileUrl,
+  modelOffset,
   expanded,
   onToggle
 }: {
   debug: DebugState;
   targetFileUrl: string;
   modelFileUrl: string;
+  modelOffset: Vec3;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -176,7 +314,9 @@ function DebugPanel({
     ["target found", debug.targetFound ? "yes" : "no"],
     ["target lost", debug.targetLost ? "yes" : "no"],
     ["model loaded", debug.modelLoaded ? "yes" : "no"],
-    ["model load failed", debug.modelLoadFailed ? "yes" : "no"]
+    ["model load failed", debug.modelLoadFailed ? "yes" : "no"],
+    ["model locked", debug.modelLocked ? "yes" : "no"],
+    ["current offset", vec3ToAttribute(modelOffset)]
   ];
 
   return (
@@ -207,6 +347,62 @@ function DebugPanel({
   );
 }
 
+function CalibrationControls({
+  modelOffset,
+  open,
+  onAdjust,
+  onReset,
+  onToggle
+}: {
+  modelOffset: Vec3;
+  open: boolean;
+  onAdjust: (delta: Vec3) => void;
+  onReset: () => void;
+  onToggle: () => void;
+}) {
+  return (
+    <aside
+      className={`calibration-panel ${open ? "calibration-panel--open" : ""}`}
+      aria-label="Model position adjustment"
+    >
+      <button className="calibration-toggle" type="button" onClick={onToggle}>
+        {open ? "隐藏调整" : "调整位置"}
+      </button>
+
+      {open ? (
+        <div className="calibration-controls">
+          <div className="calibration-offset">
+            偏移 {vec3ToAttribute(modelOffset)}
+          </div>
+          <div className="calibration-grid">
+            <button type="button" onClick={() => onAdjust([0, MODEL_OFFSET_STEP, 0])}>
+              上
+            </button>
+            <button type="button" onClick={() => onAdjust([0, -MODEL_OFFSET_STEP, 0])}>
+              下
+            </button>
+            <button type="button" onClick={() => onAdjust([-MODEL_OFFSET_STEP, 0, 0])}>
+              左
+            </button>
+            <button type="button" onClick={() => onAdjust([MODEL_OFFSET_STEP, 0, 0])}>
+              右
+            </button>
+            <button type="button" onClick={() => onAdjust([0, 0, MODEL_OFFSET_STEP])}>
+              前
+            </button>
+            <button type="button" onClick={() => onAdjust([0, 0, -MODEL_OFFSET_STEP])}>
+              后
+            </button>
+          </div>
+          <button className="calibration-reset" type="button" onClick={onReset}>
+            重置位置
+          </button>
+        </div>
+      ) : null}
+    </aside>
+  );
+}
+
 export default function ARViewer() {
   const sceneRef = useRef<AFrameScene | null>(null);
   const anchorRefs = useRef<Map<string, HTMLElement>>(new Map());
@@ -218,6 +414,8 @@ export default function ARViewer() {
   const [targetVisible, setTargetVisible] = useState(false);
   const [debug, setDebug] = useState<DebugState>(initialDebugState);
   const [debugExpanded, setDebugExpanded] = useState(false);
+  const [calibrationOpen, setCalibrationOpen] = useState(false);
+  const [modelOffset, setModelOffset] = useState<Vec3>([0, 0, 0]);
   const [origin, setOrigin] = useState("");
   const [httpsWarning, setHttpsWarning] = useState<string>();
 
@@ -278,7 +476,7 @@ export default function ARViewer() {
 
     const handleTargetFound = () => {
       setTargetVisible(true);
-      updateDebug({ targetFound: true, targetLost: false });
+      updateDebug({ targetFound: true, targetLost: false, modelLocked: true });
     };
 
     const handleTargetLost = () => {
@@ -338,6 +536,7 @@ export default function ARViewer() {
     setMessage("正在载入 AR 脚本");
     setAssetLoaded(false);
     setTargetVisible(false);
+    setModelOffset([0, 0, 0]);
     updateDebug({
       aframeScriptLoaded: false,
       mindarScriptLoaded: false,
@@ -347,11 +546,13 @@ export default function ARViewer() {
       targetFound: false,
       targetLost: false,
       modelLoaded: false,
-      modelLoadFailed: false
+      modelLoadFailed: false,
+      modelLocked: false
     });
 
     try {
       await waitForScript(AFRAME_SCRIPT_ID, AFRAME_SRC);
+      registerImageTargetStabilizer();
       updateDebug({ aframeScriptLoaded: true });
 
       await waitForScript(MINDAR_SCRIPT_ID, MINDAR_SRC);
@@ -403,6 +604,14 @@ export default function ARViewer() {
     }
   }, [primaryStatue.modelUrl, updateDebug]);
 
+  const adjustModelOffset = useCallback((delta: Vec3) => {
+    setModelOffset(([x, y, z]) => [
+      clampOffset(x + delta[0]),
+      clampOffset(y + delta[1]),
+      clampOffset(z + delta[2])
+    ]);
+  }, []);
+
   useEffect(() => {
     const scene = sceneRef.current;
 
@@ -423,6 +632,7 @@ export default function ARViewer() {
           debug={debug}
           expanded={debugExpanded}
           modelFileUrl={modelFileUrl}
+          modelOffset={modelOffset}
           onToggle={() => setDebugExpanded((current) => !current)}
           targetFileUrl={targetFileUrl}
         />
@@ -478,7 +688,9 @@ export default function ARViewer() {
                   }
                 }}
                 data-ar-anchor={anchorKey}
+                image-target-stabilizer="positionAlpha: 0.25; rotationAlpha: 0.22; scaleAlpha: 0.25; snapDistance: 0.55"
                 mindar-image-target={`targetIndex: ${statue.targetIndex}`}
+                visible={targetVisible ? "true" : "false"}
               >
                 <a-gltf-model
                   ref={(element) => {
@@ -489,7 +701,7 @@ export default function ARViewer() {
                     }
                   }}
                   src={`#${statue.name}`}
-                  position={vec3ToAttribute(statue.position)}
+                  position={vec3ToAttribute(addVec3(statue.position, modelOffset))}
                   rotation={vec3ToAttribute(statue.rotation)}
                   scale={vec3ToAttribute(statue.scale)}
                   animation="property: rotation; to: 0 360 0; dur: 12000; easing: linear; loop: true"
@@ -502,10 +714,19 @@ export default function ARViewer() {
         </a-scene>
       ) : null}
 
+      <CalibrationControls
+        modelOffset={modelOffset}
+        onAdjust={adjustModelOffset}
+        onReset={() => setModelOffset([0, 0, 0])}
+        onToggle={() => setCalibrationOpen((current) => !current)}
+        open={calibrationOpen}
+      />
+
       <DebugPanel
         debug={debug}
         expanded={debugExpanded}
         modelFileUrl={modelFileUrl}
+        modelOffset={modelOffset}
         onToggle={() => setDebugExpanded((current) => !current)}
         targetFileUrl={targetFileUrl}
       />

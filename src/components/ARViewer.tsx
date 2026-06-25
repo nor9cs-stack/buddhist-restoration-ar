@@ -68,6 +68,7 @@ const MODEL_SCALE_UP = 1.2;
 const MODEL_SCALE_DOWN = 0.8;
 const MODEL_SCALE_MIN = 0.001;
 const MODEL_SCALE_MAX = 1;
+const MODEL_ROTATION_STEP = 5;
 
 function vec3ToAttribute([x, y, z]: [number, number, number]) {
   return `${x} ${y} ${z}`;
@@ -138,8 +139,6 @@ function stopGltfAnimations(model: HTMLElement) {
   aframeModel.components?.["animation-mixer"]?.remove?.();
   model.removeAttribute("animation-mixer");
   model.removeAttribute("animation");
-  model.setAttribute("rotation", "0 0 0");
-  aframeModel.object3D?.rotation?.set(0, 0, 0);
 }
 
 function waitForNextFrame() {
@@ -250,6 +249,7 @@ function DebugPanel({
   modelFileUrl,
   modelOffset,
   modelLocalPosition,
+  modelRotation,
   modelScale,
   expanded,
   onToggle
@@ -259,6 +259,7 @@ function DebugPanel({
   modelFileUrl: string;
   modelOffset: Vec3;
   modelLocalPosition: Vec3;
+  modelRotation: Vec3;
   modelScale: Vec3;
   expanded: boolean;
   onToggle: () => void;
@@ -292,6 +293,7 @@ function DebugPanel({
     ["model locked", debug.modelLocked ? "yes" : "no"],
     ["current offset", vec3ToAttribute(modelOffset)],
     ["actual model local position", vec3ToAttribute(modelLocalPosition)],
+    ["current model rotation", vec3ToAttribute(modelRotation)],
     ["current model scale", vec3ToAttribute(modelScale)]
   ];
 
@@ -328,9 +330,11 @@ function CalibrationControls({
   open,
   showTestCube,
   onAdjust,
+  onAdjustRotation,
   onScaleDown,
   onScaleUp,
   onReset,
+  onResetRotation,
   onToggleTestCube,
   onToggle
 }: {
@@ -338,9 +342,11 @@ function CalibrationControls({
   open: boolean;
   showTestCube: boolean;
   onAdjust: (delta: Vec3) => void;
+  onAdjustRotation: (delta: Vec3) => void;
   onScaleDown: () => void;
   onScaleUp: () => void;
   onReset: () => void;
+  onResetRotation: () => void;
   onToggleTestCube: () => void;
   onToggle: () => void;
 }) {
@@ -387,6 +393,26 @@ function CalibrationControls({
             </button>
           </div>
           <div className="calibration-grid">
+            <button type="button" onClick={() => onAdjustRotation([0, -MODEL_ROTATION_STEP, 0])}>
+              左转
+            </button>
+            <button type="button" onClick={() => onAdjustRotation([0, MODEL_ROTATION_STEP, 0])}>
+              右转
+            </button>
+            <button type="button" onClick={() => onAdjustRotation([-MODEL_ROTATION_STEP, 0, 0])}>
+              前倾
+            </button>
+            <button type="button" onClick={() => onAdjustRotation([MODEL_ROTATION_STEP, 0, 0])}>
+              后仰
+            </button>
+            <button type="button" onClick={() => onAdjustRotation([0, 0, -MODEL_ROTATION_STEP])}>
+              逆时针
+            </button>
+            <button type="button" onClick={() => onAdjustRotation([0, 0, MODEL_ROTATION_STEP])}>
+              顺时针
+            </button>
+          </div>
+          <div className="calibration-grid">
             <button type="button" onClick={onScaleUp}>
               放大
             </button>
@@ -396,6 +422,9 @@ function CalibrationControls({
           </div>
           <button className="calibration-reset" type="button" onClick={onReset}>
             重置位置
+          </button>
+          <button className="calibration-reset" type="button" onClick={onResetRotation}>
+            重置旋转
           </button>
         </div>
       ) : null}
@@ -418,6 +447,7 @@ export default function ARViewer() {
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [showTestCube, setShowTestCube] = useState(false);
   const [modelOffset, setModelOffset] = useState<Vec3>([0, 0, 0]);
+  const [modelRotation, setModelRotation] = useState<Vec3>([0, 0, 0]);
   const [modelScaleMultiplier, setModelScaleMultiplier] = useState(1);
   const [origin, setOrigin] = useState("");
   const [httpsWarning, setHttpsWarning] = useState<string>();
@@ -599,6 +629,7 @@ export default function ARViewer() {
     setAssetLoaded(false);
     setTargetVisible(false);
     setModelOffset([0, 0, 0]);
+    setModelRotation([0, 0, 0]);
     setModelScaleMultiplier(1);
     updateDebug({
       aframeScriptLoaded: false,
@@ -683,6 +714,10 @@ export default function ARViewer() {
     ]);
   }, []);
 
+  const adjustModelRotation = useCallback((delta: Vec3) => {
+    setModelRotation(([x, y, z]) => [x + delta[0], y + delta[1], z + delta[2]]);
+  }, []);
+
   const scaleModel = useCallback((factor: number) => {
     setModelScaleMultiplier((current) => clampScale(current * factor));
   }, []);
@@ -709,6 +744,7 @@ export default function ARViewer() {
           modelFileUrl={modelFileUrl}
           modelLocalPosition={modelLocalPosition}
           modelOffset={modelOffset}
+          modelRotation={modelRotation}
           modelScale={modelScale}
           onToggle={() => setDebugExpanded((current) => !current)}
           targetFileUrl={targetFileUrl}
@@ -771,7 +807,7 @@ export default function ARViewer() {
                   }}
                   gltf-model={statue.modelUrl}
                   position={vec3ToAttribute(modelLocalPosition)}
-                  rotation="0 0 0"
+                  rotation={vec3ToAttribute(modelRotation)}
                   scale={vec3ToAttribute(modelScale)}
                 />
                 {showTestCube ? (
@@ -794,7 +830,9 @@ export default function ARViewer() {
       <CalibrationControls
         modelOffset={modelOffset}
         onAdjust={adjustModelOffset}
+        onAdjustRotation={adjustModelRotation}
         onReset={() => setModelOffset([0, 0, 0])}
+        onResetRotation={() => setModelRotation([0, 0, 0])}
         onScaleDown={() => scaleModel(MODEL_SCALE_DOWN)}
         onScaleUp={() => scaleModel(MODEL_SCALE_UP)}
         onToggleTestCube={() => setShowTestCube((current) => !current)}
@@ -809,6 +847,7 @@ export default function ARViewer() {
         modelFileUrl={modelFileUrl}
         modelLocalPosition={modelLocalPosition}
         modelOffset={modelOffset}
+        modelRotation={modelRotation}
         modelScale={modelScale}
         onToggle={() => setDebugExpanded((current) => !current)}
         targetFileUrl={targetFileUrl}

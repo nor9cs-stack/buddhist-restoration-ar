@@ -89,6 +89,59 @@ function clampScale(value: number) {
   return Math.max(MODEL_SCALE_MIN, Math.min(MODEL_SCALE_MAX, value));
 }
 
+function stopGltfAnimations(model: HTMLElement) {
+  const aframeModel = model as HTMLElement & {
+    components?: {
+      "animation-mixer"?: {
+        mixer?: {
+          stopAllAction?: () => void;
+          _actions?: Array<{
+            enabled?: boolean;
+            paused?: boolean;
+            stop?: () => void;
+          }>;
+        };
+        remove?: () => void;
+      };
+    };
+    object3D?: {
+      rotation?: {
+        set: (x: number, y: number, z: number) => void;
+      };
+      traverse?: (callback: (object: { animations?: unknown[] }) => void) => void;
+      animations?: unknown[];
+    };
+  };
+
+  const animationGroups: unknown[] = [];
+
+  if (aframeModel.object3D?.animations?.length) {
+    animationGroups.push(...aframeModel.object3D.animations);
+  }
+
+  aframeModel.object3D?.traverse?.((object) => {
+    if (object.animations?.length) {
+      animationGroups.push(...object.animations);
+    }
+  });
+
+  console.log("[AR Debug] GLTF animation clips found", animationGroups.length);
+
+  const mixer = aframeModel.components?.["animation-mixer"]?.mixer;
+  mixer?.stopAllAction?.();
+  mixer?._actions?.forEach((action) => {
+    action.stop?.();
+    action.paused = true;
+    action.enabled = false;
+  });
+
+  aframeModel.components?.["animation-mixer"]?.remove?.();
+  model.removeAttribute("animation-mixer");
+  model.removeAttribute("animation");
+  model.setAttribute("rotation", "0 0 0");
+  aframeModel.object3D?.rotation?.set(0, 0, 0);
+}
+
 function waitForNextFrame() {
   return new Promise<void>((resolve) => {
     requestAnimationFrame(() => resolve());
@@ -469,6 +522,7 @@ export default function ARViewer() {
 
     const handleModelLoaded = (event: Event) => {
       logEvent("model-loaded", event);
+      stopGltfAnimations(event.currentTarget as HTMLElement);
       modelFinishedRef.current = true;
       setAssetLoaded(true);
       updateDebug({
@@ -717,9 +771,8 @@ export default function ARViewer() {
                   }}
                   gltf-model={statue.modelUrl}
                   position={vec3ToAttribute(modelLocalPosition)}
-                  rotation={vec3ToAttribute(statue.rotation)}
+                  rotation="0 0 0"
                   scale={vec3ToAttribute(modelScale)}
-                  animation="property: rotation; to: 0 360 0; dur: 12000; easing: linear; loop: true"
                 />
                 {showTestCube ? (
                   <a-box

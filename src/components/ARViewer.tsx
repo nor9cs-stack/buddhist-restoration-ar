@@ -43,7 +43,7 @@ type ExhibitTransform = {
 
 type ExhibitTransforms = Record<string, ExhibitTransform>;
 
-type LockedWorldTransform = {
+type FrozenWorldTransform = {
   exhibitId: string;
   position: Vec3;
   rotation: Vec3;
@@ -205,10 +205,10 @@ function getThree() {
   ).AFRAME?.THREE;
 }
 
-function readLockedWorldTransform(
+function readFrozenWorldTransform(
   anchor: HTMLElement,
   exhibitId: string
-): LockedWorldTransform | undefined {
+): FrozenWorldTransform | undefined {
   const THREE = getThree();
   const object3D = (anchor as WorldReadableEntity).object3D;
 
@@ -234,22 +234,22 @@ function readLockedWorldTransform(
   };
 }
 
-function getLockedModelTransform(
+function getFrozenModelTransform(
   exhibit: ARExhibitConfig,
   transform: ExhibitTransform,
-  lockedBase: LockedWorldTransform
+  frozenBase: FrozenWorldTransform
 ) {
   return {
     position: addVec3(
-      lockedBase.position,
+      frozenBase.position,
       addVec3(exhibit.defaultPosition, transform.offset)
     ),
     rotation: addVec3(
-      addVec3(lockedBase.rotation, exhibit.defaultRotation),
+      addVec3(frozenBase.rotation, exhibit.defaultRotation),
       transform.rotation
     ),
     scale: multiplyVec3(
-      multiplyVec3ByVec3(lockedBase.scale, exhibit.defaultScale),
+      multiplyVec3ByVec3(frozenBase.scale, exhibit.defaultScale),
       transform.scaleMultiplier
     )
   };
@@ -483,10 +483,9 @@ function DebugPanel({
   debug,
   activeExhibitId,
   jitterReductionEnabled,
-  worldLockEnabled,
-  worldLockActive,
-  lockedPosition,
-  lockedRotation,
+  freezeAfterFoundEnabled,
+  freezeActive,
+  trackingPaused,
   targetFileUrl,
   modelFileUrl,
   modelOffset,
@@ -499,10 +498,9 @@ function DebugPanel({
   debug: DebugState;
   activeExhibitId: string;
   jitterReductionEnabled: boolean;
-  worldLockEnabled: boolean;
-  worldLockActive: boolean;
-  lockedPosition?: Vec3;
-  lockedRotation?: Vec3;
+  freezeAfterFoundEnabled: boolean;
+  freezeActive: boolean;
+  trackingPaused: boolean;
   targetFileUrl: string;
   modelFileUrl: string;
   modelOffset: Vec3;
@@ -518,10 +516,9 @@ function DebugPanel({
     ["MindAR script loaded", debug.mindarScriptLoaded ? "yes" : "no"],
     ["active exhibit id", activeExhibitId || "none"],
     ["jitter reduction enabled", jitterReductionEnabled ? "yes" : "no"],
-    ["world lock enabled", worldLockEnabled ? "yes" : "no"],
-    ["world lock active", worldLockActive ? "yes" : "no"],
-    ["locked position", lockedPosition ? vec3ToAttribute(lockedPosition) : "none"],
-    ["locked rotation", lockedRotation ? vec3ToAttribute(lockedRotation) : "none"],
+    ["freeze after found enabled", freezeAfterFoundEnabled ? "yes" : "no"],
+    ["freeze active", freezeActive ? "yes" : "no"],
+    ["tracking paused", trackingPaused ? "yes" : "no"],
     ["target file URL", targetFileUrl],
     ["model file URL", modelFileUrl],
     [
@@ -582,7 +579,7 @@ function DebugPanel({
 function CalibrationControls({
   modelOffset,
   jitterReductionEnabled,
-  worldLockEnabled,
+  freezeAfterFoundEnabled,
   open,
   showTestCube,
   onAdjust,
@@ -591,15 +588,15 @@ function CalibrationControls({
   onScaleUp,
   onReset,
   onResetRotation,
-  onResetWorldLock,
+  onResetFreeze,
   onToggleJitterReduction,
   onToggleTestCube,
-  onToggleWorldLock,
+  onToggleFreezeAfterFound,
   onToggle
 }: {
   modelOffset: Vec3;
   jitterReductionEnabled: boolean;
-  worldLockEnabled: boolean;
+  freezeAfterFoundEnabled: boolean;
   open: boolean;
   showTestCube: boolean;
   onAdjust: (delta: Vec3) => void;
@@ -608,10 +605,10 @@ function CalibrationControls({
   onScaleUp: () => void;
   onReset: () => void;
   onResetRotation: () => void;
-  onResetWorldLock: () => void;
+  onResetFreeze: () => void;
   onToggleJitterReduction: () => void;
   onToggleTestCube: () => void;
-  onToggleWorldLock: () => void;
+  onToggleFreezeAfterFound: () => void;
   onToggle: () => void;
 }) {
   return (
@@ -641,17 +638,17 @@ function CalibrationControls({
       <button
         className="calibration-toggle"
         type="button"
-        onClick={onToggleWorldLock}
-        aria-pressed={worldLockEnabled}
+        onClick={onToggleFreezeAfterFound}
+        aria-pressed={freezeAfterFoundEnabled}
       >
-        世界坐标锁定测试
+        识别后固定
       </button>
       <button
         className="calibration-toggle"
         type="button"
-        onClick={onResetWorldLock}
+        onClick={onResetFreeze}
       >
-        重新锁定世界位置
+        重新识别
       </button>
 
       {open ? (
@@ -723,9 +720,9 @@ export default function ARViewer() {
   const sceneRef = useRef<AFrameScene | null>(null);
   const anchorRefs = useRef<Map<string, HTMLElement>>(new Map());
   const modelRefs = useRef<Map<string, HTMLElement>>(new Map());
-  const lockedModelRef = useRef<HTMLElement | null>(null);
+  const frozenModelRef = useRef<HTMLElement | null>(null);
   const modelFinishedRef = useRef(false);
-  const lockedWorldTransformRef = useRef<LockedWorldTransform | undefined>(
+  const frozenWorldTransformRef = useRef<FrozenWorldTransform | undefined>(
     undefined
   );
   const [runtimeState, setRuntimeState] = useState<RuntimeState>("idle");
@@ -738,9 +735,10 @@ export default function ARViewer() {
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [showTestCube, setShowTestCube] = useState(false);
   const [jitterReductionEnabled, setJitterReductionEnabled] = useState(false);
-  const [worldLockEnabled, setWorldLockEnabled] = useState(false);
-  const [lockedWorldTransform, setLockedWorldTransform] =
-    useState<LockedWorldTransform>();
+  const [freezeAfterFoundEnabled, setFreezeAfterFoundEnabled] = useState(false);
+  const [trackingPaused, setTrackingPaused] = useState(false);
+  const [frozenWorldTransform, setFrozenWorldTransform] =
+    useState<FrozenWorldTransform>();
   const [activeExhibitId, setActiveExhibitId] = useState(
     arExhibits[0]?.id ?? ""
   );
@@ -796,30 +794,30 @@ export default function ARViewer() {
         : ([1, 1, 1] as Vec3),
     [activeExhibit, activeTransform.scaleMultiplier]
   );
-  const lockedExhibit = useMemo(
+  const frozenExhibit = useMemo(
     () =>
-      lockedWorldTransform
+      frozenWorldTransform
         ? arExhibits.find(
-            (exhibit) => exhibit.id === lockedWorldTransform.exhibitId
+            (exhibit) => exhibit.id === frozenWorldTransform.exhibitId
           )
         : undefined,
-    [lockedWorldTransform]
+    [frozenWorldTransform]
   );
-  const lockedModelTransform = useMemo(() => {
-    if (!lockedWorldTransform || !lockedExhibit) {
+  const frozenModelTransform = useMemo(() => {
+    if (!frozenWorldTransform || !frozenExhibit) {
       return undefined;
     }
 
     const transform =
-      exhibitTransforms[lockedWorldTransform.exhibitId] ??
+      exhibitTransforms[frozenWorldTransform.exhibitId] ??
       createDefaultTransform();
 
-    return getLockedModelTransform(
-      lockedExhibit,
+    return getFrozenModelTransform(
+      frozenExhibit,
       transform,
-      lockedWorldTransform
+      frozenWorldTransform
     );
-  }, [exhibitTransforms, lockedExhibit, lockedWorldTransform]);
+  }, [exhibitTransforms, frozenExhibit, frozenWorldTransform]);
 
   const updateDebug = useCallback((patch: Partial<DebugState>) => {
     setDebug((current) => {
@@ -829,36 +827,67 @@ export default function ARViewer() {
     });
   }, []);
 
-  const resetWorldLock = useCallback(() => {
-    lockedWorldTransformRef.current = undefined;
-    setLockedWorldTransform(undefined);
+  const pauseTracking = useCallback(() => {
+    sceneRef.current?.systems?.["mindar-image-system"]?.stop();
+    setTrackingPaused(true);
   }, []);
 
-  const lockWorldTransform = useCallback(
+  const resumeTracking = useCallback(async () => {
+    if (!sceneRef.current) {
+      return;
+    }
+
+    await waitForScene(sceneRef.current);
+    await sceneRef.current.systems?.["mindar-image-system"]?.start();
+    setTrackingPaused(false);
+  }, []);
+
+  const resetFreeze = useCallback(() => {
+    frozenWorldTransformRef.current = undefined;
+    setFrozenWorldTransform(undefined);
+    setTargetVisible(false);
+    void resumeTracking().catch((error) => {
+      console.error("[AR Debug] resume tracking failed", error);
+    });
+  }, [resumeTracking]);
+
+  const freezeAfterFound = useCallback(
     (anchor: HTMLElement, exhibitId: string) => {
-      if (!worldLockEnabled || lockedWorldTransformRef.current) {
+      if (!freezeAfterFoundEnabled || frozenWorldTransformRef.current) {
         return;
       }
 
-      const locked = readLockedWorldTransform(anchor, exhibitId);
+      const frozen = readFrozenWorldTransform(anchor, exhibitId);
 
-      if (!locked) {
-        console.warn("[AR Debug] world lock failed: target world transform unavailable");
+      if (!frozen) {
+        console.warn("[AR Debug] freeze failed: target world transform unavailable");
         return;
       }
 
-      console.log("[AR Debug] world lock captured", locked);
-      lockedWorldTransformRef.current = locked;
-      setLockedWorldTransform(locked);
+      console.log("[AR Debug] freeze captured", frozen);
+      frozenWorldTransformRef.current = frozen;
+      setFrozenWorldTransform(frozen);
       setActiveExhibitId(exhibitId);
+      requestAnimationFrame(() => pauseTracking());
     },
-    [worldLockEnabled]
+    [freezeAfterFoundEnabled, pauseTracking]
   );
 
-  const toggleWorldLock = useCallback(() => {
-    resetWorldLock();
-    setWorldLockEnabled((current) => !current);
-  }, [resetWorldLock]);
+  const toggleFreezeAfterFound = useCallback(() => {
+    setFreezeAfterFoundEnabled((current) => {
+      const next = !current;
+
+      if (current) {
+        frozenWorldTransformRef.current = undefined;
+        setFrozenWorldTransform(undefined);
+        void resumeTracking().catch((error) => {
+          console.error("[AR Debug] resume tracking failed", error);
+        });
+      }
+
+      return next;
+    });
+  }, [resumeTracking]);
 
   useEffect(() => {
     console.log("[AR Debug] component mounted");
@@ -895,7 +924,7 @@ export default function ARViewer() {
       const handleTargetFound = () => {
         setActiveExhibitId(exhibitId);
         setTargetVisible(true);
-        lockWorldTransform(anchor, exhibitId);
+        freezeAfterFound(anchor, exhibitId);
         updateDebug({
           targetFound: true,
           targetLost: false,
@@ -919,7 +948,7 @@ export default function ARViewer() {
     return () => {
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [lockWorldTransform, sceneEnabled, updateDebug]);
+  }, [freezeAfterFound, sceneEnabled, updateDebug]);
 
   useEffect(() => {
     if (!sceneEnabled) {
@@ -1005,29 +1034,29 @@ export default function ARViewer() {
   }, [sceneEnabled, updateDebug]);
 
   useEffect(() => {
-    const lockedModel = lockedModelRef.current;
+    const frozenModel = frozenModelRef.current;
 
-    if (!lockedModel) {
+    if (!frozenModel) {
       return;
     }
 
-    const handleLockedModelLoaded = (event: Event) => {
-      console.log("[AR Debug] world locked model-loaded", event);
+    const handleFrozenModelLoaded = (event: Event) => {
+      console.log("[AR Debug] frozen model-loaded", event);
       stopGltfAnimations(event.currentTarget as HTMLElement);
     };
 
-    const handleLockedModelError = (event: Event) => {
-      console.error("[AR Debug] world locked model-error", event);
+    const handleFrozenModelError = (event: Event) => {
+      console.error("[AR Debug] frozen model-error", event);
     };
 
-    lockedModel.addEventListener("model-loaded", handleLockedModelLoaded);
-    lockedModel.addEventListener("model-error", handleLockedModelError);
+    frozenModel.addEventListener("model-loaded", handleFrozenModelLoaded);
+    frozenModel.addEventListener("model-error", handleFrozenModelError);
 
     return () => {
-      lockedModel.removeEventListener("model-loaded", handleLockedModelLoaded);
-      lockedModel.removeEventListener("model-error", handleLockedModelError);
+      frozenModel.removeEventListener("model-loaded", handleFrozenModelLoaded);
+      frozenModel.removeEventListener("model-error", handleFrozenModelError);
     };
-  }, [lockedWorldTransform]);
+  }, [frozenWorldTransform]);
 
   const startAR = useCallback(async () => {
     let cameraRequested = false;
@@ -1037,8 +1066,10 @@ export default function ARViewer() {
     setAssetLoaded(false);
     setTargetVisible(false);
     setJitterReductionEnabled(false);
-    setWorldLockEnabled(false);
-    resetWorldLock();
+    setFreezeAfterFoundEnabled(false);
+    setTrackingPaused(false);
+    frozenWorldTransformRef.current = undefined;
+    setFrozenWorldTransform(undefined);
     setActiveExhibitId(arExhibits[0]?.id ?? "");
     setExhibitTransforms(createInitialExhibitTransforms());
     updateDebug({
@@ -1115,7 +1146,7 @@ export default function ARViewer() {
             : "AR 启动失败，请检查相机权限、HTTPS 设置与网络连接。"
       );
     }
-  }, [resetWorldLock, updateDebug]);
+  }, [updateDebug]);
 
   const adjustModelOffset = useCallback((delta: Vec3) => {
     setExhibitTransforms((current) => {
@@ -1200,9 +1231,9 @@ export default function ARViewer() {
           activeExhibitId={activeExhibit?.id ?? ""}
           debug={debug}
           expanded={debugExpanded}
+          freezeActive={Boolean(frozenWorldTransform)}
+          freezeAfterFoundEnabled={freezeAfterFoundEnabled}
           jitterReductionEnabled={jitterReductionEnabled}
-          lockedPosition={lockedModelTransform?.position}
-          lockedRotation={lockedModelTransform?.rotation}
           modelFileUrl={modelFileUrl}
           modelLocalPosition={modelLocalPosition}
           modelOffset={activeTransform.offset}
@@ -1210,8 +1241,7 @@ export default function ARViewer() {
           modelScale={modelScale}
           onToggle={() => setDebugExpanded((current) => !current)}
           targetFileUrl={targetFileUrl}
-          worldLockActive={Boolean(lockedWorldTransform)}
-          worldLockEnabled={worldLockEnabled}
+          trackingPaused={trackingPaused}
         />
       </>
     );
@@ -1221,7 +1251,7 @@ export default function ARViewer() {
     <main className="ar-stage">
       {(runtimeState === "loading" ||
         !assetLoaded ||
-        (!targetVisible && !lockedWorldTransform)) && (
+        (!targetVisible && !frozenWorldTransform)) && (
         <div className="ar-overlay" aria-live="polite">
           <div className="ar-status">
             <strong>
@@ -1251,8 +1281,8 @@ export default function ARViewer() {
             const transform = getExhibitModelTransform(exhibit);
             const jitterReductionAttribute = `position: ${vec3ToAttribute(transform.position)}; rotation: ${vec3ToAttribute(transform.rotation)}; scale: ${vec3ToAttribute(transform.scale)}; factor: ${JITTER_REDUCTION_FACTOR}`;
             const targetChildVisible =
-              !worldLockEnabled ||
-              lockedWorldTransform?.exhibitId !== exhibit.id;
+              !freezeAfterFoundEnabled ||
+              frozenWorldTransform?.exhibitId !== exhibit.id;
 
             return (
               <a-entity
@@ -1301,17 +1331,17 @@ export default function ARViewer() {
             );
           })}
 
-          {worldLockEnabled && lockedExhibit && lockedModelTransform ? (
+          {freezeAfterFoundEnabled && frozenExhibit && frozenModelTransform ? (
             <a-entity
-              id={`${lockedExhibit.id}-world-locked-model`}
+              id={`${frozenExhibit.id}-frozen-model`}
               ref={(element) => {
-                lockedModelRef.current = element;
+                frozenModelRef.current = element;
               }}
-              data-world-locked-model={lockedExhibit.id}
-              gltf-model={lockedExhibit.modelUrl}
-              position={vec3ToAttribute(lockedModelTransform.position)}
-              rotation={vec3ToAttribute(lockedModelTransform.rotation)}
-              scale={vec3ToAttribute(lockedModelTransform.scale)}
+              data-frozen-model={frozenExhibit.id}
+              gltf-model={frozenExhibit.modelUrl}
+              position={vec3ToAttribute(frozenModelTransform.position)}
+              rotation={vec3ToAttribute(frozenModelTransform.rotation)}
+              scale={vec3ToAttribute(frozenModelTransform.scale)}
             />
           ) : null}
 
@@ -1354,25 +1384,25 @@ export default function ARViewer() {
         }
         onScaleDown={() => scaleModel(MODEL_SCALE_DOWN)}
         onScaleUp={() => scaleModel(MODEL_SCALE_UP)}
-        onResetWorldLock={resetWorldLock}
+        onResetFreeze={resetFreeze}
         onToggleJitterReduction={() =>
           setJitterReductionEnabled((current) => !current)
         }
         onToggleTestCube={() => setShowTestCube((current) => !current)}
-        onToggleWorldLock={toggleWorldLock}
+        onToggleFreezeAfterFound={toggleFreezeAfterFound}
         onToggle={() => setCalibrationOpen((current) => !current)}
+        freezeAfterFoundEnabled={freezeAfterFoundEnabled}
         open={calibrationOpen}
         showTestCube={showTestCube}
-        worldLockEnabled={worldLockEnabled}
       />
 
       <DebugPanel
         activeExhibitId={activeExhibit?.id ?? ""}
         debug={debug}
         expanded={debugExpanded}
+        freezeActive={Boolean(frozenWorldTransform)}
+        freezeAfterFoundEnabled={freezeAfterFoundEnabled}
         jitterReductionEnabled={jitterReductionEnabled}
-        lockedPosition={lockedModelTransform?.position}
-        lockedRotation={lockedModelTransform?.rotation}
         modelFileUrl={modelFileUrl}
         modelLocalPosition={modelLocalPosition}
         modelOffset={activeTransform.offset}
@@ -1380,8 +1410,7 @@ export default function ARViewer() {
         modelScale={modelScale}
         onToggle={() => setDebugExpanded((current) => !current)}
         targetFileUrl={targetFileUrl}
-        worldLockActive={Boolean(lockedWorldTransform)}
-        worldLockEnabled={worldLockEnabled}
+        trackingPaused={trackingPaused}
       />
     </main>
   );

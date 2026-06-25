@@ -44,3 +44,19 @@ Next:
 
 \- Multi-statue museum architecture
 
+
+
+\## V0.9 WebAR Stable
+
+
+
+\- Stable MindAR image tracking
+
+\- Multi-target architecture
+
+\- Adjustable position/rotation/scale
+
+\- Mobile deployment (Vercel)
+
+\- Experimental world-lock / placement removed
+

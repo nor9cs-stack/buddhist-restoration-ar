@@ -12,7 +12,6 @@ type AFrameScene = HTMLElement & {
   systems?: {
     "mindar-image-system"?: {
       start: () => Promise<void>;
-      stop: () => void;
     };
   };
 };
@@ -41,39 +40,6 @@ type ExhibitTransform = {
 };
 
 type ExhibitTransforms = Record<string, ExhibitTransform>;
-
-type PlacedWorldTransform = {
-  exhibitId: string;
-  position: Vec3;
-  rotation: Vec3;
-  scale: Vec3;
-};
-
-type ThreeVector3 = {
-  x: number;
-  y: number;
-  z: number;
-};
-
-type ThreeQuaternion = unknown;
-
-type ThreeEuler = ThreeVector3 & {
-  setFromQuaternion: (quaternion: ThreeQuaternion, order?: string) => ThreeEuler;
-};
-
-type ThreeLike = {
-  Vector3: new () => ThreeVector3;
-  Quaternion: new () => ThreeQuaternion;
-  Euler: new () => ThreeEuler;
-};
-
-type WorldReadableEntity = HTMLElement & {
-  object3D?: {
-    getWorldPosition: (target: ThreeVector3) => ThreeVector3;
-    getWorldQuaternion: (target: ThreeQuaternion) => ThreeQuaternion;
-    getWorldScale: (target: ThreeVector3) => ThreeVector3;
-  };
-};
 
 const initialDebugState: DebugState = {
   componentMounted: false,
@@ -121,10 +87,6 @@ function multiplyVec3([x, y, z]: Vec3, scalar: number): Vec3 {
   return [x * scalar, y * scalar, z * scalar];
 }
 
-function multiplyVec3ByVec3([ax, ay, az]: Vec3, [bx, by, bz]: Vec3): Vec3 {
-  return [ax * bx, ay * by, az * bz];
-}
-
 function createDefaultTransform(): ExhibitTransform {
   return {
     offset: [0, 0, 0],
@@ -145,70 +107,6 @@ function clampOffset(value: number) {
 
 function clampScale(value: number) {
   return Math.max(MODEL_SCALE_MIN, Math.min(MODEL_SCALE_MAX, value));
-}
-
-function radToDeg(value: number) {
-  return (value * 180) / Math.PI;
-}
-
-function getThree() {
-  return (
-    window as typeof window & {
-      AFRAME?: {
-        THREE?: ThreeLike;
-      };
-    }
-  ).AFRAME?.THREE;
-}
-
-function readPlacedWorldTransform(
-  anchor: HTMLElement,
-  exhibitId: string
-): PlacedWorldTransform | undefined {
-  const THREE = getThree();
-  const object3D = (anchor as WorldReadableEntity).object3D;
-
-  if (!THREE || !object3D) {
-    return undefined;
-  }
-
-  const position = new THREE.Vector3();
-  const quaternion = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-  const euler = new THREE.Euler();
-
-  object3D.getWorldPosition(position);
-  object3D.getWorldQuaternion(quaternion);
-  object3D.getWorldScale(scale);
-  euler.setFromQuaternion(quaternion, "XYZ");
-
-  return {
-    exhibitId,
-    position: [position.x, position.y, position.z],
-    rotation: [radToDeg(euler.x), radToDeg(euler.y), radToDeg(euler.z)],
-    scale: [scale.x, scale.y, scale.z]
-  };
-}
-
-function getPlacedModelTransform(
-  exhibit: ARExhibitConfig,
-  transform: ExhibitTransform,
-  placedBase: PlacedWorldTransform
-) {
-  return {
-    position: addVec3(
-      placedBase.position,
-      addVec3(exhibit.defaultPosition, transform.offset)
-    ),
-    rotation: addVec3(
-      addVec3(placedBase.rotation, exhibit.defaultRotation),
-      transform.rotation
-    ),
-    scale: multiplyVec3(
-      multiplyVec3ByVec3(placedBase.scale, exhibit.defaultScale),
-      transform.scaleMultiplier
-    )
-  };
 }
 
 function stopGltfAnimations(model: HTMLElement) {
@@ -354,24 +252,11 @@ async function requestCameraAccess() {
     );
   }
 
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: { ideal: "environment" }
-    },
-    audio: false
-  });
-
-  stream.getTracks().forEach((track) => track.stop());
 }
 
 function DebugPanel({
   debug,
   activeExhibitId,
-  placementReady,
-  buddhaPlaced,
-  trackingPaused,
-  placedPosition,
-  placedRotation,
   targetFileUrl,
   modelFileUrl,
   modelOffset,
@@ -383,11 +268,6 @@ function DebugPanel({
 }: {
   debug: DebugState;
   activeExhibitId: string;
-  placementReady: boolean;
-  buddhaPlaced: boolean;
-  trackingPaused: boolean;
-  placedPosition?: Vec3;
-  placedRotation?: Vec3;
   targetFileUrl: string;
   modelFileUrl: string;
   modelOffset: Vec3;
@@ -424,11 +304,6 @@ function DebugPanel({
     ["gltf asset failed", debug.gltfAssetFailed ? "yes" : "no"],
     ["object3D attached", debug.object3DAttached ? "yes" : "no"],
     ["object3D removed", debug.object3DRemoved ? "yes" : "no"],
-    ["placement ready", placementReady ? "yes" : "no"],
-    ["Buddha placed", buddhaPlaced ? "yes" : "no"],
-    ["tracking paused", trackingPaused ? "yes" : "no"],
-    ["placed position", placedPosition ? vec3ToAttribute(placedPosition) : "none"],
-    ["placed rotation", placedRotation ? vec3ToAttribute(placedRotation) : "none"],
     ["current offset", vec3ToAttribute(modelOffset)],
     ["actual model local position", vec3ToAttribute(modelLocalPosition)],
     ["current model rotation", vec3ToAttribute(modelRotation)],
@@ -465,8 +340,6 @@ function DebugPanel({
 
 function CalibrationControls({
   modelOffset,
-  placementReady,
-  buddhaPlaced,
   open,
   showTestCube,
   onAdjust,
@@ -475,14 +348,10 @@ function CalibrationControls({
   onScaleUp,
   onReset,
   onResetRotation,
-  onPlaceBuddha,
-  onResetPlacement,
   onToggleTestCube,
   onToggle
 }: {
   modelOffset: Vec3;
-  placementReady: boolean;
-  buddhaPlaced: boolean;
   open: boolean;
   showTestCube: boolean;
   onAdjust: (delta: Vec3) => void;
@@ -491,8 +360,6 @@ function CalibrationControls({
   onScaleUp: () => void;
   onReset: () => void;
   onResetRotation: () => void;
-  onPlaceBuddha: () => void;
-  onResetPlacement: () => void;
   onToggleTestCube: () => void;
   onToggle: () => void;
 }) {
@@ -511,21 +378,6 @@ function CalibrationControls({
         aria-pressed={showTestCube}
       >
         Show Test Cube
-      </button>
-      <button
-        className="calibration-toggle"
-        type="button"
-        onClick={onPlaceBuddha}
-        disabled={!placementReady || buddhaPlaced}
-      >
-        放置佛像
-      </button>
-      <button
-        className="calibration-toggle"
-        type="button"
-        onClick={onResetPlacement}
-      >
-        重新放置
       </button>
 
       {open ? (
@@ -597,11 +449,7 @@ export default function ARViewer() {
   const sceneRef = useRef<AFrameScene | null>(null);
   const anchorRefs = useRef<Map<string, HTMLElement>>(new Map());
   const modelRefs = useRef<Map<string, HTMLElement>>(new Map());
-  const placedModelRef = useRef<HTMLElement | null>(null);
   const modelFinishedRef = useRef(false);
-  const placedWorldTransformRef = useRef<PlacedWorldTransform | undefined>(
-    undefined
-  );
   const [runtimeState, setRuntimeState] = useState<RuntimeState>("idle");
   const [message, setMessage] = useState<string>();
   const [sceneEnabled, setSceneEnabled] = useState(false);
@@ -611,9 +459,6 @@ export default function ARViewer() {
   const [debugExpanded, setDebugExpanded] = useState(false);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [showTestCube, setShowTestCube] = useState(false);
-  const [trackingPaused, setTrackingPaused] = useState(false);
-  const [placedWorldTransform, setPlacedWorldTransform] =
-    useState<PlacedWorldTransform>();
   const [activeExhibitId, setActiveExhibitId] = useState(
     arExhibits[0]?.id ?? ""
   );
@@ -669,32 +514,6 @@ export default function ARViewer() {
         : ([1, 1, 1] as Vec3),
     [activeExhibit, activeTransform.scaleMultiplier]
   );
-  const placedExhibit = useMemo(
-    () =>
-      placedWorldTransform
-        ? arExhibits.find(
-            (exhibit) => exhibit.id === placedWorldTransform.exhibitId
-          )
-        : undefined,
-    [placedWorldTransform]
-  );
-  const placedModelTransform = useMemo(() => {
-    if (!placedWorldTransform || !placedExhibit) {
-      return undefined;
-    }
-
-    const transform =
-      exhibitTransforms[placedWorldTransform.exhibitId] ??
-      createDefaultTransform();
-
-    return getPlacedModelTransform(
-      placedExhibit,
-      transform,
-      placedWorldTransform
-    );
-  }, [exhibitTransforms, placedExhibit, placedWorldTransform]);
-  const placementReady = targetVisible && !placedWorldTransform;
-
   const updateDebug = useCallback((patch: Partial<DebugState>) => {
     setDebug((current) => {
       const next = { ...current, ...patch };
@@ -702,55 +521,6 @@ export default function ARViewer() {
       return next;
     });
   }, []);
-
-  const pauseTracking = useCallback(() => {
-    sceneRef.current?.systems?.["mindar-image-system"]?.stop();
-    setTrackingPaused(true);
-  }, []);
-
-  const resumeTracking = useCallback(async () => {
-    if (!sceneRef.current) {
-      return;
-    }
-
-    await waitForScene(sceneRef.current);
-    await sceneRef.current.systems?.["mindar-image-system"]?.start();
-    setTrackingPaused(false);
-  }, []);
-
-  const placeBuddha = useCallback(() => {
-    if (!placementReady || placedWorldTransformRef.current) {
-      return;
-    }
-
-    const anchor = anchorRefs.current.get(activeExhibitId);
-
-    if (!anchor) {
-      console.warn("[AR Debug] placement failed: active target unavailable");
-      return;
-    }
-
-    const placed = readPlacedWorldTransform(anchor, activeExhibitId);
-
-    if (!placed) {
-      console.warn("[AR Debug] placement failed: target world transform unavailable");
-      return;
-    }
-
-    console.log("[AR Debug] placement captured", placed);
-    placedWorldTransformRef.current = placed;
-    setPlacedWorldTransform(placed);
-    requestAnimationFrame(() => pauseTracking());
-  }, [activeExhibitId, pauseTracking, placementReady]);
-
-  const resetPlacement = useCallback(() => {
-    placedWorldTransformRef.current = undefined;
-    setPlacedWorldTransform(undefined);
-    setTargetVisible(false);
-    void resumeTracking().catch((error) => {
-      console.error("[AR Debug] resume tracking failed", error);
-    });
-  }, [resumeTracking]);
 
   useEffect(() => {
     console.log("[AR Debug] component mounted");
@@ -794,9 +564,7 @@ export default function ARViewer() {
       };
 
       const handleTargetLost = () => {
-        if (!placedWorldTransformRef.current) {
-          setTargetVisible(false);
-        }
+        setTargetVisible(false);
         updateDebug({ targetLost: true });
       };
 
@@ -896,31 +664,6 @@ export default function ARViewer() {
     };
   }, [sceneEnabled, updateDebug]);
 
-  useEffect(() => {
-    const placedModel = placedModelRef.current;
-
-    if (!placedModel) {
-      return;
-    }
-
-    const handlePlacedModelLoaded = (event: Event) => {
-      console.log("[AR Debug] placed model-loaded", event);
-      stopGltfAnimations(event.currentTarget as HTMLElement);
-    };
-
-    const handlePlacedModelError = (event: Event) => {
-      console.error("[AR Debug] placed model-error", event);
-    };
-
-    placedModel.addEventListener("model-loaded", handlePlacedModelLoaded);
-    placedModel.addEventListener("model-error", handlePlacedModelError);
-
-    return () => {
-      placedModel.removeEventListener("model-loaded", handlePlacedModelLoaded);
-      placedModel.removeEventListener("model-error", handlePlacedModelError);
-    };
-  }, [placedWorldTransform]);
-
   const startAR = useCallback(async () => {
     let cameraRequested = false;
 
@@ -928,9 +671,6 @@ export default function ARViewer() {
     setMessage("正在载入 AR 脚本");
     setAssetLoaded(false);
     setTargetVisible(false);
-    setTrackingPaused(false);
-    placedWorldTransformRef.current = undefined;
-    setPlacedWorldTransform(undefined);
     setActiveExhibitId(arExhibits[0]?.id ?? "");
     setExhibitTransforms(createInitialExhibitTransforms());
     updateDebug({
@@ -971,10 +711,6 @@ export default function ARViewer() {
 
       await waitForNextFrame();
       await requestCameraAccess();
-      updateDebug({
-        cameraPermissionGranted: true,
-        cameraPermissionDenied: false
-      });
 
       await waitForNextFrame();
 
@@ -985,6 +721,10 @@ export default function ARViewer() {
       setMessage("正在启动扫描");
       await waitForScene(sceneRef.current);
       await sceneRef.current.systems?.["mindar-image-system"]?.start();
+      updateDebug({
+        cameraPermissionGranted: true,
+        cameraPermissionDenied: false
+      });
       setRuntimeState("running");
       setMessage(undefined);
     } catch (error) {
@@ -1070,14 +810,6 @@ export default function ARViewer() {
     [exhibitTransforms]
   );
 
-  useEffect(() => {
-    const scene = sceneRef.current;
-
-    return () => {
-      scene?.systems?.["mindar-image-system"]?.stop();
-    };
-  }, []);
-
   if (runtimeState === "idle" || runtimeState === "error") {
     return (
       <>
@@ -1088,7 +820,6 @@ export default function ARViewer() {
         />
         <DebugPanel
           activeExhibitId={activeExhibit?.id ?? ""}
-          buddhaPlaced={Boolean(placedWorldTransform)}
           debug={debug}
           expanded={debugExpanded}
           modelFileUrl={modelFileUrl}
@@ -1097,11 +828,7 @@ export default function ARViewer() {
           modelRotation={modelRotation}
           modelScale={modelScale}
           onToggle={() => setDebugExpanded((current) => !current)}
-          placedPosition={placedModelTransform?.position}
-          placedRotation={placedModelTransform?.rotation}
-          placementReady={placementReady}
           targetFileUrl={targetFileUrl}
-          trackingPaused={trackingPaused}
         />
       </>
     );
@@ -1111,7 +838,7 @@ export default function ARViewer() {
     <main className="ar-stage">
       {(runtimeState === "loading" ||
         !assetLoaded ||
-        (!targetVisible && !placedWorldTransform)) && (
+        !targetVisible) && (
         <div className="ar-overlay" aria-live="polite">
           <div className="ar-status">
             <strong>
@@ -1139,9 +866,6 @@ export default function ARViewer() {
           {arExhibits.map((exhibit) => {
             const anchorKey = exhibit.id;
             const transform = getExhibitModelTransform(exhibit);
-            const targetChildVisible =
-              !placedWorldTransform ||
-              placedWorldTransform.exhibitId !== exhibit.id;
 
             return (
               <a-entity
@@ -1170,7 +894,6 @@ export default function ARViewer() {
                   position={vec3ToAttribute(transform.position)}
                   rotation={vec3ToAttribute(transform.rotation)}
                   scale={vec3ToAttribute(transform.scale)}
-                  visible={targetChildVisible ? "true" : "false"}
                 />
                 {showTestCube ? (
                   <a-box
@@ -1185,26 +908,11 @@ export default function ARViewer() {
             );
           })}
 
-          {placedExhibit && placedModelTransform ? (
-            <a-entity
-              id={`${placedExhibit.id}-placed-model`}
-              ref={(element) => {
-                placedModelRef.current = element;
-              }}
-              data-placed-model={placedExhibit.id}
-              gltf-model="/models/buddha_001.glb"
-              position={vec3ToAttribute(placedModelTransform.position)}
-              rotation={vec3ToAttribute(placedModelTransform.rotation)}
-              scale={vec3ToAttribute(placedModelTransform.scale)}
-            />
-          ) : null}
-
           <a-camera position="0 0 0" look-controls="enabled: false" />
         </a-scene>
       ) : null}
 
       <CalibrationControls
-        buddhaPlaced={Boolean(placedWorldTransform)}
         modelOffset={activeTransform.offset}
         onAdjust={adjustModelOffset}
         onAdjustRotation={adjustModelRotation}
@@ -1238,18 +946,14 @@ export default function ARViewer() {
         }
         onScaleDown={() => scaleModel(MODEL_SCALE_DOWN)}
         onScaleUp={() => scaleModel(MODEL_SCALE_UP)}
-        onPlaceBuddha={placeBuddha}
-        onResetPlacement={resetPlacement}
         onToggleTestCube={() => setShowTestCube((current) => !current)}
         onToggle={() => setCalibrationOpen((current) => !current)}
         open={calibrationOpen}
-        placementReady={placementReady}
         showTestCube={showTestCube}
       />
 
       <DebugPanel
         activeExhibitId={activeExhibit?.id ?? ""}
-        buddhaPlaced={Boolean(placedWorldTransform)}
         debug={debug}
         expanded={debugExpanded}
         modelFileUrl={modelFileUrl}
@@ -1258,11 +962,7 @@ export default function ARViewer() {
         modelRotation={modelRotation}
         modelScale={modelScale}
         onToggle={() => setDebugExpanded((current) => !current)}
-        placedPosition={placedModelTransform?.position}
-        placedRotation={placedModelTransform?.rotation}
-        placementReady={placementReady}
         targetFileUrl={targetFileUrl}
-        trackingPaused={trackingPaused}
       />
     </main>
   );

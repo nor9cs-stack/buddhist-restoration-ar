@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import StartScreen from "./StartScreen";
-import { imageTargetSrc, statues } from "@/data/statues";
-import type { Vec3 } from "@/data/statues";
+import { arExhibits, imageTargetSrc } from "@/data/statues";
+import type { ARExhibitConfig, Vec3 } from "@/data/statues";
 
 type RuntimeState = "idle" | "loading" | "running" | "error";
 
@@ -33,6 +33,49 @@ type DebugState = {
   object3DAttached: boolean;
   object3DRemoved: boolean;
   modelLocked: boolean;
+};
+
+type ExhibitTransform = {
+  offset: Vec3;
+  rotation: Vec3;
+  scaleMultiplier: number;
+};
+
+type ExhibitTransforms = Record<string, ExhibitTransform>;
+
+type LocalJitterReductionComponent = {
+  data: {
+    position: string;
+    rotation: string;
+    scale: string;
+    factor: number;
+  };
+  el: HTMLElement & {
+    object3D?: {
+      position: {
+        x: number;
+        y: number;
+        z: number;
+        set: (x: number, y: number, z: number) => void;
+      };
+      rotation: {
+        x: number;
+        y: number;
+        z: number;
+        set: (x: number, y: number, z: number) => void;
+      };
+      scale: {
+        x: number;
+        y: number;
+        z: number;
+        set: (x: number, y: number, z: number) => void;
+      };
+    };
+  };
+  targetPosition: Vec3;
+  targetRotation: Vec3;
+  targetScale: Vec3;
+  parseVec3: (value: string, fallback: Vec3) => Vec3;
 };
 
 const initialDebugState: DebugState = {
@@ -69,6 +112,9 @@ const MODEL_SCALE_DOWN = 0.8;
 const MODEL_SCALE_MIN = 0.001;
 const MODEL_SCALE_MAX = 1;
 const MODEL_ROTATION_STEP = 5;
+// Experimental local-only smoothing amount for 防抖测试. Tune or remove this
+// after real-device testing if it does not improve perceived target jitter.
+const JITTER_REDUCTION_FACTOR = 0.15;
 
 function vec3ToAttribute([x, y, z]: [number, number, number]) {
   return `${x} ${y} ${z}`;
@@ -82,12 +128,101 @@ function multiplyVec3([x, y, z]: Vec3, scalar: number): Vec3 {
   return [x * scalar, y * scalar, z * scalar];
 }
 
+function createDefaultTransform(): ExhibitTransform {
+  return {
+    offset: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scaleMultiplier: 1
+  };
+}
+
+function createInitialExhibitTransforms(): ExhibitTransforms {
+  return Object.fromEntries(
+    arExhibits.map((exhibit) => [exhibit.id, createDefaultTransform()])
+  );
+}
+
 function clampOffset(value: number) {
   return Math.max(-MODEL_OFFSET_LIMIT, Math.min(MODEL_OFFSET_LIMIT, value));
 }
 
 function clampScale(value: number) {
   return Math.max(MODEL_SCALE_MIN, Math.min(MODEL_SCALE_MAX, value));
+}
+
+function degToRad(value: number) {
+  return (value * Math.PI) / 180;
+}
+
+function registerLocalJitterReduction() {
+  const win = window as typeof window & {
+    AFRAME?: {
+      components?: Record<string, unknown>;
+      registerComponent: (name: string, definition: unknown) => void;
+    };
+  };
+
+  if (!win.AFRAME || win.AFRAME.components?.["local-jitter-reduction"]) {
+    return;
+  }
+
+  win.AFRAME.registerComponent("local-jitter-reduction", {
+    schema: {
+      position: { default: "0 0 0" },
+      rotation: { default: "0 0 0" },
+      scale: { default: "1 1 1" },
+      factor: { default: JITTER_REDUCTION_FACTOR }
+    },
+
+    init: function init(this: LocalJitterReductionComponent) {
+      this.targetPosition = this.parseVec3(this.data.position, [0, 0, 0]);
+      this.targetRotation = this.parseVec3(this.data.rotation, [0, 0, 0]);
+      this.targetScale = this.parseVec3(this.data.scale, [1, 1, 1]);
+    },
+
+    update: function update(this: LocalJitterReductionComponent) {
+      this.targetPosition = this.parseVec3(this.data.position, [0, 0, 0]);
+      this.targetRotation = this.parseVec3(this.data.rotation, [0, 0, 0]);
+      this.targetScale = this.parseVec3(this.data.scale, [1, 1, 1]);
+    },
+
+    parseVec3: function parseVec3(value: string, fallback: Vec3) {
+      const parsed = value
+        .trim()
+        .split(/\s+/)
+        .map((item) => Number(item));
+
+      return parsed.length === 3 && parsed.every(Number.isFinite)
+        ? [parsed[0], parsed[1], parsed[2]]
+        : fallback;
+    },
+
+    tick: function tick(this: LocalJitterReductionComponent) {
+      const object3D = this.el.object3D;
+
+      if (!object3D) {
+        return;
+      }
+
+      const factor = this.data.factor;
+
+      object3D.position.set(
+        object3D.position.x + (this.targetPosition[0] - object3D.position.x) * factor,
+        object3D.position.y + (this.targetPosition[1] - object3D.position.y) * factor,
+        object3D.position.z + (this.targetPosition[2] - object3D.position.z) * factor
+      );
+      object3D.rotation.set(
+        object3D.rotation.x + (degToRad(this.targetRotation[0]) - object3D.rotation.x) * factor,
+        object3D.rotation.y + (degToRad(this.targetRotation[1]) - object3D.rotation.y) * factor,
+        object3D.rotation.z + (degToRad(this.targetRotation[2]) - object3D.rotation.z) * factor
+      );
+      object3D.scale.set(
+        object3D.scale.x + (this.targetScale[0] - object3D.scale.x) * factor,
+        object3D.scale.y + (this.targetScale[1] - object3D.scale.y) * factor,
+        object3D.scale.z + (this.targetScale[2] - object3D.scale.z) * factor
+      );
+    }
+  });
 }
 
 function stopGltfAnimations(model: HTMLElement) {
@@ -245,6 +380,8 @@ async function requestCameraAccess() {
 
 function DebugPanel({
   debug,
+  activeExhibitId,
+  jitterReductionEnabled,
   targetFileUrl,
   modelFileUrl,
   modelOffset,
@@ -255,6 +392,8 @@ function DebugPanel({
   onToggle
 }: {
   debug: DebugState;
+  activeExhibitId: string;
+  jitterReductionEnabled: boolean;
   targetFileUrl: string;
   modelFileUrl: string;
   modelOffset: Vec3;
@@ -268,6 +407,8 @@ function DebugPanel({
     ["AR component mounted", debug.componentMounted ? "yes" : "no"],
     ["A-Frame script loaded", debug.aframeScriptLoaded ? "yes" : "no"],
     ["MindAR script loaded", debug.mindarScriptLoaded ? "yes" : "no"],
+    ["active exhibit id", activeExhibitId || "none"],
+    ["jitter reduction enabled", jitterReductionEnabled ? "yes" : "no"],
     ["target file URL", targetFileUrl],
     ["model file URL", modelFileUrl],
     [
@@ -327,6 +468,7 @@ function DebugPanel({
 
 function CalibrationControls({
   modelOffset,
+  jitterReductionEnabled,
   open,
   showTestCube,
   onAdjust,
@@ -335,10 +477,12 @@ function CalibrationControls({
   onScaleUp,
   onReset,
   onResetRotation,
+  onToggleJitterReduction,
   onToggleTestCube,
   onToggle
 }: {
   modelOffset: Vec3;
+  jitterReductionEnabled: boolean;
   open: boolean;
   showTestCube: boolean;
   onAdjust: (delta: Vec3) => void;
@@ -347,6 +491,7 @@ function CalibrationControls({
   onScaleUp: () => void;
   onReset: () => void;
   onResetRotation: () => void;
+  onToggleJitterReduction: () => void;
   onToggleTestCube: () => void;
   onToggle: () => void;
 }) {
@@ -365,6 +510,14 @@ function CalibrationControls({
         aria-pressed={showTestCube}
       >
         Show Test Cube
+      </button>
+      <button
+        className="calibration-toggle"
+        type="button"
+        onClick={onToggleJitterReduction}
+        aria-pressed={jitterReductionEnabled}
+      >
+        防抖测试
       </button>
 
       {open ? (
@@ -446,16 +599,23 @@ export default function ARViewer() {
   const [debugExpanded, setDebugExpanded] = useState(false);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [showTestCube, setShowTestCube] = useState(false);
-  const [modelOffset, setModelOffset] = useState<Vec3>([0, 0, 0]);
-  const [modelRotation, setModelRotation] = useState<Vec3>([0, 0, 0]);
-  const [modelScaleMultiplier, setModelScaleMultiplier] = useState(1);
+  const [jitterReductionEnabled, setJitterReductionEnabled] = useState(false);
+  const [activeExhibitId, setActiveExhibitId] = useState(
+    arExhibits[0]?.id ?? ""
+  );
+  const [exhibitTransforms, setExhibitTransforms] =
+    useState<ExhibitTransforms>(createInitialExhibitTransforms);
   const [origin, setOrigin] = useState("");
   const [httpsWarning, setHttpsWarning] = useState<string>();
 
-  const primaryStatue = useMemo(
-    () => statues.find((statue) => statue.targetIndex === 0) ?? statues[0],
-    []
+  const activeExhibit = useMemo(
+    () =>
+      arExhibits.find((exhibit) => exhibit.id === activeExhibitId) ??
+      arExhibits[0],
+    [activeExhibitId]
   );
+  const activeTransform =
+    exhibitTransforms[activeExhibit?.id ?? ""] ?? createDefaultTransform();
 
   const targetFileUrl = useMemo(
     () => (origin ? new URL(imageTargetSrc, origin).href : imageTargetSrc),
@@ -464,16 +624,36 @@ export default function ARViewer() {
 
   const modelFileUrl = useMemo(
     () =>
-      origin ? new URL(primaryStatue.modelUrl, origin).href : primaryStatue.modelUrl,
-    [origin, primaryStatue.modelUrl]
+      activeExhibit
+        ? origin
+          ? new URL(activeExhibit.modelUrl, origin).href
+          : activeExhibit.modelUrl
+        : "",
+    [activeExhibit, origin]
   );
   const modelLocalPosition = useMemo(
-    () => addVec3(primaryStatue.position, modelOffset),
-    [modelOffset, primaryStatue.position]
+    () =>
+      activeExhibit
+        ? addVec3(activeExhibit.defaultPosition, activeTransform.offset)
+        : ([0, 0, 0] as Vec3),
+    [activeExhibit, activeTransform.offset]
+  );
+  const modelRotation = useMemo(
+    () =>
+      activeExhibit
+        ? addVec3(activeExhibit.defaultRotation, activeTransform.rotation)
+        : ([0, 0, 0] as Vec3),
+    [activeExhibit, activeTransform.rotation]
   );
   const modelScale = useMemo(
-    () => multiplyVec3(primaryStatue.scale, modelScaleMultiplier),
-    [modelScaleMultiplier, primaryStatue.scale]
+    () =>
+      activeExhibit
+        ? multiplyVec3(
+            activeExhibit.defaultScale,
+            activeTransform.scaleMultiplier
+          )
+        : ([1, 1, 1] as Vec3),
+    [activeExhibit, activeTransform.scaleMultiplier]
   );
 
   const updateDebug = useCallback((patch: Partial<DebugState>) => {
@@ -513,28 +693,34 @@ export default function ARViewer() {
       return;
     }
 
-    const anchors = Array.from(anchorRefs.current.values());
+    const cleanups: Array<() => void> = [];
 
-    const handleTargetFound = () => {
-      setTargetVisible(true);
-      updateDebug({ targetFound: true, targetLost: false, modelLocked: true });
-    };
+    anchorRefs.current.forEach((anchor, exhibitId) => {
+      const handleTargetFound = () => {
+        setActiveExhibitId(exhibitId);
+        setTargetVisible(true);
+        updateDebug({
+          targetFound: true,
+          targetLost: false,
+          modelLocked: true
+        });
+      };
 
-    const handleTargetLost = () => {
-      setTargetVisible(false);
-      updateDebug({ targetLost: true });
-    };
+      const handleTargetLost = () => {
+        setTargetVisible(false);
+        updateDebug({ targetLost: true });
+      };
 
-    anchors.forEach((anchor) => {
       anchor.addEventListener("targetFound", handleTargetFound);
       anchor.addEventListener("targetLost", handleTargetLost);
-    });
-
-    return () => {
-      anchors.forEach((anchor) => {
+      cleanups.push(() => {
         anchor.removeEventListener("targetFound", handleTargetFound);
         anchor.removeEventListener("targetLost", handleTargetLost);
       });
+    });
+
+    return () => {
+      cleanups.forEach((cleanup) => cleanup());
     };
   }, [sceneEnabled, updateDebug]);
 
@@ -628,9 +814,9 @@ export default function ARViewer() {
     setMessage("正在载入 AR 脚本");
     setAssetLoaded(false);
     setTargetVisible(false);
-    setModelOffset([0, 0, 0]);
-    setModelRotation([0, 0, 0]);
-    setModelScaleMultiplier(1);
+    setJitterReductionEnabled(false);
+    setActiveExhibitId(arExhibits[0]?.id ?? "");
+    setExhibitTransforms(createInitialExhibitTransforms());
     updateDebug({
       aframeScriptLoaded: false,
       mindarScriptLoaded: false,
@@ -654,6 +840,7 @@ export default function ARViewer() {
         AFRAME_SRC,
         SCRIPT_LOAD_TIMEOUT_MS
       );
+      registerLocalJitterReduction();
       updateDebug({ aframeScriptLoaded: true });
 
       await waitForScript(
@@ -707,20 +894,67 @@ export default function ARViewer() {
   }, [updateDebug]);
 
   const adjustModelOffset = useCallback((delta: Vec3) => {
-    setModelOffset(([x, y, z]) => [
-      clampOffset(x + delta[0]),
-      clampOffset(y + delta[1]),
-      clampOffset(z + delta[2])
-    ]);
-  }, []);
+    setExhibitTransforms((current) => {
+      const transform = current[activeExhibitId] ?? createDefaultTransform();
+
+      return {
+        ...current,
+        [activeExhibitId]: {
+          ...transform,
+          offset: [
+            clampOffset(transform.offset[0] + delta[0]),
+            clampOffset(transform.offset[1] + delta[1]),
+            clampOffset(transform.offset[2] + delta[2])
+          ]
+        }
+      };
+    });
+  }, [activeExhibitId]);
 
   const adjustModelRotation = useCallback((delta: Vec3) => {
-    setModelRotation(([x, y, z]) => [x + delta[0], y + delta[1], z + delta[2]]);
-  }, []);
+    setExhibitTransforms((current) => {
+      const transform = current[activeExhibitId] ?? createDefaultTransform();
+
+      return {
+        ...current,
+        [activeExhibitId]: {
+          ...transform,
+          rotation: [
+            transform.rotation[0] + delta[0],
+            transform.rotation[1] + delta[1],
+            transform.rotation[2] + delta[2]
+          ]
+        }
+      };
+    });
+  }, [activeExhibitId]);
 
   const scaleModel = useCallback((factor: number) => {
-    setModelScaleMultiplier((current) => clampScale(current * factor));
-  }, []);
+    setExhibitTransforms((current) => {
+      const transform = current[activeExhibitId] ?? createDefaultTransform();
+
+      return {
+        ...current,
+        [activeExhibitId]: {
+          ...transform,
+          scaleMultiplier: clampScale(transform.scaleMultiplier * factor)
+        }
+      };
+    });
+  }, [activeExhibitId]);
+
+  const getExhibitModelTransform = useCallback(
+    (exhibit: ARExhibitConfig) => {
+      const transform = exhibitTransforms[exhibit.id] ?? createDefaultTransform();
+
+      return {
+        position: addVec3(exhibit.defaultPosition, transform.offset),
+        rotation: addVec3(exhibit.defaultRotation, transform.rotation),
+        scale: multiplyVec3(exhibit.defaultScale, transform.scaleMultiplier)
+      };
+    },
+    [exhibitTransforms]
+  );
 
   useEffect(() => {
     const scene = sceneRef.current;
@@ -739,11 +973,13 @@ export default function ARViewer() {
           onStart={startAR}
         />
         <DebugPanel
+          activeExhibitId={activeExhibit?.id ?? ""}
           debug={debug}
           expanded={debugExpanded}
+          jitterReductionEnabled={jitterReductionEnabled}
           modelFileUrl={modelFileUrl}
           modelLocalPosition={modelLocalPosition}
-          modelOffset={modelOffset}
+          modelOffset={activeTransform.offset}
           modelRotation={modelRotation}
           modelScale={modelScale}
           onToggle={() => setDebugExpanded((current) => !current)}
@@ -780,8 +1016,10 @@ export default function ARViewer() {
           device-orientation-permission-ui="enabled: false"
           embedded
         >
-          {statues.map((statue) => {
-            const anchorKey = `${statue.name}-${statue.targetIndex}`;
+          {arExhibits.map((exhibit) => {
+            const anchorKey = exhibit.id;
+            const transform = getExhibitModelTransform(exhibit);
+            const jitterReductionAttribute = `position: ${vec3ToAttribute(transform.position)}; rotation: ${vec3ToAttribute(transform.rotation)}; scale: ${vec3ToAttribute(transform.scale)}; factor: ${JITTER_REDUCTION_FACTOR}`;
 
             return (
               <a-entity
@@ -794,10 +1032,10 @@ export default function ARViewer() {
                   }
                 }}
                 data-ar-anchor={anchorKey}
-                mindar-image-target={`targetIndex: ${statue.targetIndex}`}
+                mindar-image-target={`targetIndex: ${exhibit.targetIndex}`}
               >
                 <a-entity
-                  id="buddha-model"
+                  id={`${exhibit.id}-model`}
                   ref={(element) => {
                     if (element) {
                       modelRefs.current.set(anchorKey, element);
@@ -805,10 +1043,16 @@ export default function ARViewer() {
                       modelRefs.current.delete(anchorKey);
                     }
                   }}
-                  gltf-model={statue.modelUrl}
-                  position={vec3ToAttribute(modelLocalPosition)}
-                  rotation={vec3ToAttribute(modelRotation)}
-                  scale={vec3ToAttribute(modelScale)}
+                  data-ar-model={exhibit.id}
+                  gltf-model={exhibit.modelUrl}
+                  local-jitter-reduction={
+                    jitterReductionEnabled
+                      ? jitterReductionAttribute
+                      : undefined
+                  }
+                  position={vec3ToAttribute(transform.position)}
+                  rotation={vec3ToAttribute(transform.rotation)}
+                  scale={vec3ToAttribute(transform.scale)}
                 />
                 {showTestCube ? (
                   <a-box
@@ -828,13 +1072,43 @@ export default function ARViewer() {
       ) : null}
 
       <CalibrationControls
-        modelOffset={modelOffset}
+        jitterReductionEnabled={jitterReductionEnabled}
+        modelOffset={activeTransform.offset}
         onAdjust={adjustModelOffset}
         onAdjustRotation={adjustModelRotation}
-        onReset={() => setModelOffset([0, 0, 0])}
-        onResetRotation={() => setModelRotation([0, 0, 0])}
+        onReset={() =>
+          setExhibitTransforms((current) => {
+            const transform =
+              current[activeExhibitId] ?? createDefaultTransform();
+
+            return {
+              ...current,
+              [activeExhibitId]: {
+                ...transform,
+                offset: [0, 0, 0]
+              }
+            };
+          })
+        }
+        onResetRotation={() =>
+          setExhibitTransforms((current) => {
+            const transform =
+              current[activeExhibitId] ?? createDefaultTransform();
+
+            return {
+              ...current,
+              [activeExhibitId]: {
+                ...transform,
+                rotation: [0, 0, 0]
+              }
+            };
+          })
+        }
         onScaleDown={() => scaleModel(MODEL_SCALE_DOWN)}
         onScaleUp={() => scaleModel(MODEL_SCALE_UP)}
+        onToggleJitterReduction={() =>
+          setJitterReductionEnabled((current) => !current)
+        }
         onToggleTestCube={() => setShowTestCube((current) => !current)}
         onToggle={() => setCalibrationOpen((current) => !current)}
         open={calibrationOpen}
@@ -842,11 +1116,13 @@ export default function ARViewer() {
       />
 
       <DebugPanel
+        activeExhibitId={activeExhibit?.id ?? ""}
         debug={debug}
         expanded={debugExpanded}
+        jitterReductionEnabled={jitterReductionEnabled}
         modelFileUrl={modelFileUrl}
         modelLocalPosition={modelLocalPosition}
-        modelOffset={modelOffset}
+        modelOffset={activeTransform.offset}
         modelRotation={modelRotation}
         modelScale={modelScale}
         onToggle={() => setDebugExpanded((current) => !current)}

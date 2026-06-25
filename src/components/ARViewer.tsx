@@ -32,7 +32,6 @@ type DebugState = {
   gltfAssetFailed: boolean;
   object3DAttached: boolean;
   object3DRemoved: boolean;
-  modelLocked: boolean;
 };
 
 type ExhibitTransform = {
@@ -43,7 +42,7 @@ type ExhibitTransform = {
 
 type ExhibitTransforms = Record<string, ExhibitTransform>;
 
-type FrozenWorldTransform = {
+type PlacedWorldTransform = {
   exhibitId: string;
   position: Vec3;
   rotation: Vec3;
@@ -76,41 +75,6 @@ type WorldReadableEntity = HTMLElement & {
   };
 };
 
-type LocalJitterReductionComponent = {
-  data: {
-    position: string;
-    rotation: string;
-    scale: string;
-    factor: number;
-  };
-  el: HTMLElement & {
-    object3D?: {
-      position: {
-        x: number;
-        y: number;
-        z: number;
-        set: (x: number, y: number, z: number) => void;
-      };
-      rotation: {
-        x: number;
-        y: number;
-        z: number;
-        set: (x: number, y: number, z: number) => void;
-      };
-      scale: {
-        x: number;
-        y: number;
-        z: number;
-        set: (x: number, y: number, z: number) => void;
-      };
-    };
-  };
-  targetPosition: Vec3;
-  targetRotation: Vec3;
-  targetScale: Vec3;
-  parseVec3: (value: string, fallback: Vec3) => Vec3;
-};
-
 const initialDebugState: DebugState = {
   componentMounted: false,
   aframeScriptLoaded: false,
@@ -125,8 +89,7 @@ const initialDebugState: DebugState = {
   gltfAssetLoaded: false,
   gltfAssetFailed: false,
   object3DAttached: false,
-  object3DRemoved: false,
-  modelLocked: false
+  object3DRemoved: false
 };
 
 const AFRAME_SCRIPT_ID = "aframe-runtime";
@@ -145,9 +108,6 @@ const MODEL_SCALE_DOWN = 0.8;
 const MODEL_SCALE_MIN = 0.001;
 const MODEL_SCALE_MAX = 1;
 const MODEL_ROTATION_STEP = 5;
-// Experimental local-only smoothing amount for 防抖测试. Tune or remove this
-// after real-device testing if it does not improve perceived target jitter.
-const JITTER_REDUCTION_FACTOR = 0.15;
 
 function vec3ToAttribute([x, y, z]: [number, number, number]) {
   return `${x} ${y} ${z}`;
@@ -187,10 +147,6 @@ function clampScale(value: number) {
   return Math.max(MODEL_SCALE_MIN, Math.min(MODEL_SCALE_MAX, value));
 }
 
-function degToRad(value: number) {
-  return (value * Math.PI) / 180;
-}
-
 function radToDeg(value: number) {
   return (value * 180) / Math.PI;
 }
@@ -205,10 +161,10 @@ function getThree() {
   ).AFRAME?.THREE;
 }
 
-function readFrozenWorldTransform(
+function readPlacedWorldTransform(
   anchor: HTMLElement,
   exhibitId: string
-): FrozenWorldTransform | undefined {
+): PlacedWorldTransform | undefined {
   const THREE = getThree();
   const object3D = (anchor as WorldReadableEntity).object3D;
 
@@ -234,96 +190,25 @@ function readFrozenWorldTransform(
   };
 }
 
-function getFrozenModelTransform(
+function getPlacedModelTransform(
   exhibit: ARExhibitConfig,
   transform: ExhibitTransform,
-  frozenBase: FrozenWorldTransform
+  placedBase: PlacedWorldTransform
 ) {
   return {
     position: addVec3(
-      frozenBase.position,
+      placedBase.position,
       addVec3(exhibit.defaultPosition, transform.offset)
     ),
     rotation: addVec3(
-      addVec3(frozenBase.rotation, exhibit.defaultRotation),
+      addVec3(placedBase.rotation, exhibit.defaultRotation),
       transform.rotation
     ),
     scale: multiplyVec3(
-      multiplyVec3ByVec3(frozenBase.scale, exhibit.defaultScale),
+      multiplyVec3ByVec3(placedBase.scale, exhibit.defaultScale),
       transform.scaleMultiplier
     )
   };
-}
-
-function registerLocalJitterReduction() {
-  const win = window as typeof window & {
-    AFRAME?: {
-      components?: Record<string, unknown>;
-      registerComponent: (name: string, definition: unknown) => void;
-    };
-  };
-
-  if (!win.AFRAME || win.AFRAME.components?.["local-jitter-reduction"]) {
-    return;
-  }
-
-  win.AFRAME.registerComponent("local-jitter-reduction", {
-    schema: {
-      position: { default: "0 0 0" },
-      rotation: { default: "0 0 0" },
-      scale: { default: "1 1 1" },
-      factor: { default: JITTER_REDUCTION_FACTOR }
-    },
-
-    init: function init(this: LocalJitterReductionComponent) {
-      this.targetPosition = this.parseVec3(this.data.position, [0, 0, 0]);
-      this.targetRotation = this.parseVec3(this.data.rotation, [0, 0, 0]);
-      this.targetScale = this.parseVec3(this.data.scale, [1, 1, 1]);
-    },
-
-    update: function update(this: LocalJitterReductionComponent) {
-      this.targetPosition = this.parseVec3(this.data.position, [0, 0, 0]);
-      this.targetRotation = this.parseVec3(this.data.rotation, [0, 0, 0]);
-      this.targetScale = this.parseVec3(this.data.scale, [1, 1, 1]);
-    },
-
-    parseVec3: function parseVec3(value: string, fallback: Vec3) {
-      const parsed = value
-        .trim()
-        .split(/\s+/)
-        .map((item) => Number(item));
-
-      return parsed.length === 3 && parsed.every(Number.isFinite)
-        ? [parsed[0], parsed[1], parsed[2]]
-        : fallback;
-    },
-
-    tick: function tick(this: LocalJitterReductionComponent) {
-      const object3D = this.el.object3D;
-
-      if (!object3D) {
-        return;
-      }
-
-      const factor = this.data.factor;
-
-      object3D.position.set(
-        object3D.position.x + (this.targetPosition[0] - object3D.position.x) * factor,
-        object3D.position.y + (this.targetPosition[1] - object3D.position.y) * factor,
-        object3D.position.z + (this.targetPosition[2] - object3D.position.z) * factor
-      );
-      object3D.rotation.set(
-        object3D.rotation.x + (degToRad(this.targetRotation[0]) - object3D.rotation.x) * factor,
-        object3D.rotation.y + (degToRad(this.targetRotation[1]) - object3D.rotation.y) * factor,
-        object3D.rotation.z + (degToRad(this.targetRotation[2]) - object3D.rotation.z) * factor
-      );
-      object3D.scale.set(
-        object3D.scale.x + (this.targetScale[0] - object3D.scale.x) * factor,
-        object3D.scale.y + (this.targetScale[1] - object3D.scale.y) * factor,
-        object3D.scale.z + (this.targetScale[2] - object3D.scale.z) * factor
-      );
-    }
-  });
 }
 
 function stopGltfAnimations(model: HTMLElement) {
@@ -482,10 +367,11 @@ async function requestCameraAccess() {
 function DebugPanel({
   debug,
   activeExhibitId,
-  jitterReductionEnabled,
-  freezeAfterFoundEnabled,
-  freezeActive,
+  placementReady,
+  buddhaPlaced,
   trackingPaused,
+  placedPosition,
+  placedRotation,
   targetFileUrl,
   modelFileUrl,
   modelOffset,
@@ -497,10 +383,11 @@ function DebugPanel({
 }: {
   debug: DebugState;
   activeExhibitId: string;
-  jitterReductionEnabled: boolean;
-  freezeAfterFoundEnabled: boolean;
-  freezeActive: boolean;
+  placementReady: boolean;
+  buddhaPlaced: boolean;
   trackingPaused: boolean;
+  placedPosition?: Vec3;
+  placedRotation?: Vec3;
   targetFileUrl: string;
   modelFileUrl: string;
   modelOffset: Vec3;
@@ -515,10 +402,6 @@ function DebugPanel({
     ["A-Frame script loaded", debug.aframeScriptLoaded ? "yes" : "no"],
     ["MindAR script loaded", debug.mindarScriptLoaded ? "yes" : "no"],
     ["active exhibit id", activeExhibitId || "none"],
-    ["jitter reduction enabled", jitterReductionEnabled ? "yes" : "no"],
-    ["freeze after found enabled", freezeAfterFoundEnabled ? "yes" : "no"],
-    ["freeze active", freezeActive ? "yes" : "no"],
-    ["tracking paused", trackingPaused ? "yes" : "no"],
     ["target file URL", targetFileUrl],
     ["model file URL", modelFileUrl],
     [
@@ -541,7 +424,11 @@ function DebugPanel({
     ["gltf asset failed", debug.gltfAssetFailed ? "yes" : "no"],
     ["object3D attached", debug.object3DAttached ? "yes" : "no"],
     ["object3D removed", debug.object3DRemoved ? "yes" : "no"],
-    ["model locked", debug.modelLocked ? "yes" : "no"],
+    ["placement ready", placementReady ? "yes" : "no"],
+    ["Buddha placed", buddhaPlaced ? "yes" : "no"],
+    ["tracking paused", trackingPaused ? "yes" : "no"],
+    ["placed position", placedPosition ? vec3ToAttribute(placedPosition) : "none"],
+    ["placed rotation", placedRotation ? vec3ToAttribute(placedRotation) : "none"],
     ["current offset", vec3ToAttribute(modelOffset)],
     ["actual model local position", vec3ToAttribute(modelLocalPosition)],
     ["current model rotation", vec3ToAttribute(modelRotation)],
@@ -578,8 +465,8 @@ function DebugPanel({
 
 function CalibrationControls({
   modelOffset,
-  jitterReductionEnabled,
-  freezeAfterFoundEnabled,
+  placementReady,
+  buddhaPlaced,
   open,
   showTestCube,
   onAdjust,
@@ -588,15 +475,14 @@ function CalibrationControls({
   onScaleUp,
   onReset,
   onResetRotation,
-  onResetFreeze,
-  onToggleJitterReduction,
+  onPlaceBuddha,
+  onResetPlacement,
   onToggleTestCube,
-  onToggleFreezeAfterFound,
   onToggle
 }: {
   modelOffset: Vec3;
-  jitterReductionEnabled: boolean;
-  freezeAfterFoundEnabled: boolean;
+  placementReady: boolean;
+  buddhaPlaced: boolean;
   open: boolean;
   showTestCube: boolean;
   onAdjust: (delta: Vec3) => void;
@@ -605,10 +491,9 @@ function CalibrationControls({
   onScaleUp: () => void;
   onReset: () => void;
   onResetRotation: () => void;
-  onResetFreeze: () => void;
-  onToggleJitterReduction: () => void;
+  onPlaceBuddha: () => void;
+  onResetPlacement: () => void;
   onToggleTestCube: () => void;
-  onToggleFreezeAfterFound: () => void;
   onToggle: () => void;
 }) {
   return (
@@ -630,25 +515,17 @@ function CalibrationControls({
       <button
         className="calibration-toggle"
         type="button"
-        onClick={onToggleJitterReduction}
-        aria-pressed={jitterReductionEnabled}
+        onClick={onPlaceBuddha}
+        disabled={!placementReady || buddhaPlaced}
       >
-        防抖测试
+        放置佛像
       </button>
       <button
         className="calibration-toggle"
         type="button"
-        onClick={onToggleFreezeAfterFound}
-        aria-pressed={freezeAfterFoundEnabled}
+        onClick={onResetPlacement}
       >
-        识别后固定
-      </button>
-      <button
-        className="calibration-toggle"
-        type="button"
-        onClick={onResetFreeze}
-      >
-        重新识别
+        重新放置
       </button>
 
       {open ? (
@@ -720,9 +597,9 @@ export default function ARViewer() {
   const sceneRef = useRef<AFrameScene | null>(null);
   const anchorRefs = useRef<Map<string, HTMLElement>>(new Map());
   const modelRefs = useRef<Map<string, HTMLElement>>(new Map());
-  const frozenModelRef = useRef<HTMLElement | null>(null);
+  const placedModelRef = useRef<HTMLElement | null>(null);
   const modelFinishedRef = useRef(false);
-  const frozenWorldTransformRef = useRef<FrozenWorldTransform | undefined>(
+  const placedWorldTransformRef = useRef<PlacedWorldTransform | undefined>(
     undefined
   );
   const [runtimeState, setRuntimeState] = useState<RuntimeState>("idle");
@@ -734,11 +611,9 @@ export default function ARViewer() {
   const [debugExpanded, setDebugExpanded] = useState(false);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [showTestCube, setShowTestCube] = useState(false);
-  const [jitterReductionEnabled, setJitterReductionEnabled] = useState(false);
-  const [freezeAfterFoundEnabled, setFreezeAfterFoundEnabled] = useState(false);
   const [trackingPaused, setTrackingPaused] = useState(false);
-  const [frozenWorldTransform, setFrozenWorldTransform] =
-    useState<FrozenWorldTransform>();
+  const [placedWorldTransform, setPlacedWorldTransform] =
+    useState<PlacedWorldTransform>();
   const [activeExhibitId, setActiveExhibitId] = useState(
     arExhibits[0]?.id ?? ""
   );
@@ -794,30 +669,31 @@ export default function ARViewer() {
         : ([1, 1, 1] as Vec3),
     [activeExhibit, activeTransform.scaleMultiplier]
   );
-  const frozenExhibit = useMemo(
+  const placedExhibit = useMemo(
     () =>
-      frozenWorldTransform
+      placedWorldTransform
         ? arExhibits.find(
-            (exhibit) => exhibit.id === frozenWorldTransform.exhibitId
+            (exhibit) => exhibit.id === placedWorldTransform.exhibitId
           )
         : undefined,
-    [frozenWorldTransform]
+    [placedWorldTransform]
   );
-  const frozenModelTransform = useMemo(() => {
-    if (!frozenWorldTransform || !frozenExhibit) {
+  const placedModelTransform = useMemo(() => {
+    if (!placedWorldTransform || !placedExhibit) {
       return undefined;
     }
 
     const transform =
-      exhibitTransforms[frozenWorldTransform.exhibitId] ??
+      exhibitTransforms[placedWorldTransform.exhibitId] ??
       createDefaultTransform();
 
-    return getFrozenModelTransform(
-      frozenExhibit,
+    return getPlacedModelTransform(
+      placedExhibit,
       transform,
-      frozenWorldTransform
+      placedWorldTransform
     );
-  }, [exhibitTransforms, frozenExhibit, frozenWorldTransform]);
+  }, [exhibitTransforms, placedExhibit, placedWorldTransform]);
+  const placementReady = targetVisible && !placedWorldTransform;
 
   const updateDebug = useCallback((patch: Partial<DebugState>) => {
     setDebug((current) => {
@@ -842,50 +718,37 @@ export default function ARViewer() {
     setTrackingPaused(false);
   }, []);
 
-  const resetFreeze = useCallback(() => {
-    frozenWorldTransformRef.current = undefined;
-    setFrozenWorldTransform(undefined);
+  const placeBuddha = useCallback(() => {
+    if (!placementReady || placedWorldTransformRef.current) {
+      return;
+    }
+
+    const anchor = anchorRefs.current.get(activeExhibitId);
+
+    if (!anchor) {
+      console.warn("[AR Debug] placement failed: active target unavailable");
+      return;
+    }
+
+    const placed = readPlacedWorldTransform(anchor, activeExhibitId);
+
+    if (!placed) {
+      console.warn("[AR Debug] placement failed: target world transform unavailable");
+      return;
+    }
+
+    console.log("[AR Debug] placement captured", placed);
+    placedWorldTransformRef.current = placed;
+    setPlacedWorldTransform(placed);
+    requestAnimationFrame(() => pauseTracking());
+  }, [activeExhibitId, pauseTracking, placementReady]);
+
+  const resetPlacement = useCallback(() => {
+    placedWorldTransformRef.current = undefined;
+    setPlacedWorldTransform(undefined);
     setTargetVisible(false);
     void resumeTracking().catch((error) => {
       console.error("[AR Debug] resume tracking failed", error);
-    });
-  }, [resumeTracking]);
-
-  const freezeAfterFound = useCallback(
-    (anchor: HTMLElement, exhibitId: string) => {
-      if (!freezeAfterFoundEnabled || frozenWorldTransformRef.current) {
-        return;
-      }
-
-      const frozen = readFrozenWorldTransform(anchor, exhibitId);
-
-      if (!frozen) {
-        console.warn("[AR Debug] freeze failed: target world transform unavailable");
-        return;
-      }
-
-      console.log("[AR Debug] freeze captured", frozen);
-      frozenWorldTransformRef.current = frozen;
-      setFrozenWorldTransform(frozen);
-      setActiveExhibitId(exhibitId);
-      requestAnimationFrame(() => pauseTracking());
-    },
-    [freezeAfterFoundEnabled, pauseTracking]
-  );
-
-  const toggleFreezeAfterFound = useCallback(() => {
-    setFreezeAfterFoundEnabled((current) => {
-      const next = !current;
-
-      if (current) {
-        frozenWorldTransformRef.current = undefined;
-        setFrozenWorldTransform(undefined);
-        void resumeTracking().catch((error) => {
-          console.error("[AR Debug] resume tracking failed", error);
-        });
-      }
-
-      return next;
     });
   }, [resumeTracking]);
 
@@ -924,16 +787,16 @@ export default function ARViewer() {
       const handleTargetFound = () => {
         setActiveExhibitId(exhibitId);
         setTargetVisible(true);
-        freezeAfterFound(anchor, exhibitId);
         updateDebug({
           targetFound: true,
-          targetLost: false,
-          modelLocked: true
+          targetLost: false
         });
       };
 
       const handleTargetLost = () => {
-        setTargetVisible(false);
+        if (!placedWorldTransformRef.current) {
+          setTargetVisible(false);
+        }
         updateDebug({ targetLost: true });
       };
 
@@ -948,7 +811,7 @@ export default function ARViewer() {
     return () => {
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [freezeAfterFound, sceneEnabled, updateDebug]);
+  }, [sceneEnabled, updateDebug]);
 
   useEffect(() => {
     if (!sceneEnabled) {
@@ -1034,29 +897,29 @@ export default function ARViewer() {
   }, [sceneEnabled, updateDebug]);
 
   useEffect(() => {
-    const frozenModel = frozenModelRef.current;
+    const placedModel = placedModelRef.current;
 
-    if (!frozenModel) {
+    if (!placedModel) {
       return;
     }
 
-    const handleFrozenModelLoaded = (event: Event) => {
-      console.log("[AR Debug] frozen model-loaded", event);
+    const handlePlacedModelLoaded = (event: Event) => {
+      console.log("[AR Debug] placed model-loaded", event);
       stopGltfAnimations(event.currentTarget as HTMLElement);
     };
 
-    const handleFrozenModelError = (event: Event) => {
-      console.error("[AR Debug] frozen model-error", event);
+    const handlePlacedModelError = (event: Event) => {
+      console.error("[AR Debug] placed model-error", event);
     };
 
-    frozenModel.addEventListener("model-loaded", handleFrozenModelLoaded);
-    frozenModel.addEventListener("model-error", handleFrozenModelError);
+    placedModel.addEventListener("model-loaded", handlePlacedModelLoaded);
+    placedModel.addEventListener("model-error", handlePlacedModelError);
 
     return () => {
-      frozenModel.removeEventListener("model-loaded", handleFrozenModelLoaded);
-      frozenModel.removeEventListener("model-error", handleFrozenModelError);
+      placedModel.removeEventListener("model-loaded", handlePlacedModelLoaded);
+      placedModel.removeEventListener("model-error", handlePlacedModelError);
     };
-  }, [frozenWorldTransform]);
+  }, [placedWorldTransform]);
 
   const startAR = useCallback(async () => {
     let cameraRequested = false;
@@ -1065,11 +928,9 @@ export default function ARViewer() {
     setMessage("正在载入 AR 脚本");
     setAssetLoaded(false);
     setTargetVisible(false);
-    setJitterReductionEnabled(false);
-    setFreezeAfterFoundEnabled(false);
     setTrackingPaused(false);
-    frozenWorldTransformRef.current = undefined;
-    setFrozenWorldTransform(undefined);
+    placedWorldTransformRef.current = undefined;
+    setPlacedWorldTransform(undefined);
     setActiveExhibitId(arExhibits[0]?.id ?? "");
     setExhibitTransforms(createInitialExhibitTransforms());
     updateDebug({
@@ -1085,8 +946,7 @@ export default function ARViewer() {
       gltfAssetLoaded: false,
       gltfAssetFailed: false,
       object3DAttached: false,
-      object3DRemoved: false,
-      modelLocked: false
+      object3DRemoved: false
     });
 
     try {
@@ -1095,7 +955,6 @@ export default function ARViewer() {
         AFRAME_SRC,
         SCRIPT_LOAD_TIMEOUT_MS
       );
-      registerLocalJitterReduction();
       updateDebug({ aframeScriptLoaded: true });
 
       await waitForScript(
@@ -1229,17 +1088,18 @@ export default function ARViewer() {
         />
         <DebugPanel
           activeExhibitId={activeExhibit?.id ?? ""}
+          buddhaPlaced={Boolean(placedWorldTransform)}
           debug={debug}
           expanded={debugExpanded}
-          freezeActive={Boolean(frozenWorldTransform)}
-          freezeAfterFoundEnabled={freezeAfterFoundEnabled}
-          jitterReductionEnabled={jitterReductionEnabled}
           modelFileUrl={modelFileUrl}
           modelLocalPosition={modelLocalPosition}
           modelOffset={activeTransform.offset}
           modelRotation={modelRotation}
           modelScale={modelScale}
           onToggle={() => setDebugExpanded((current) => !current)}
+          placedPosition={placedModelTransform?.position}
+          placedRotation={placedModelTransform?.rotation}
+          placementReady={placementReady}
           targetFileUrl={targetFileUrl}
           trackingPaused={trackingPaused}
         />
@@ -1251,7 +1111,7 @@ export default function ARViewer() {
     <main className="ar-stage">
       {(runtimeState === "loading" ||
         !assetLoaded ||
-        (!targetVisible && !frozenWorldTransform)) && (
+        (!targetVisible && !placedWorldTransform)) && (
         <div className="ar-overlay" aria-live="polite">
           <div className="ar-status">
             <strong>
@@ -1279,10 +1139,9 @@ export default function ARViewer() {
           {arExhibits.map((exhibit) => {
             const anchorKey = exhibit.id;
             const transform = getExhibitModelTransform(exhibit);
-            const jitterReductionAttribute = `position: ${vec3ToAttribute(transform.position)}; rotation: ${vec3ToAttribute(transform.rotation)}; scale: ${vec3ToAttribute(transform.scale)}; factor: ${JITTER_REDUCTION_FACTOR}`;
             const targetChildVisible =
-              !freezeAfterFoundEnabled ||
-              frozenWorldTransform?.exhibitId !== exhibit.id;
+              !placedWorldTransform ||
+              placedWorldTransform.exhibitId !== exhibit.id;
 
             return (
               <a-entity
@@ -1308,11 +1167,6 @@ export default function ARViewer() {
                   }}
                   data-ar-model={exhibit.id}
                   gltf-model={exhibit.modelUrl}
-                  local-jitter-reduction={
-                    jitterReductionEnabled
-                      ? jitterReductionAttribute
-                      : undefined
-                  }
                   position={vec3ToAttribute(transform.position)}
                   rotation={vec3ToAttribute(transform.rotation)}
                   scale={vec3ToAttribute(transform.scale)}
@@ -1331,17 +1185,17 @@ export default function ARViewer() {
             );
           })}
 
-          {freezeAfterFoundEnabled && frozenExhibit && frozenModelTransform ? (
+          {placedExhibit && placedModelTransform ? (
             <a-entity
-              id={`${frozenExhibit.id}-frozen-model`}
+              id={`${placedExhibit.id}-placed-model`}
               ref={(element) => {
-                frozenModelRef.current = element;
+                placedModelRef.current = element;
               }}
-              data-frozen-model={frozenExhibit.id}
-              gltf-model={frozenExhibit.modelUrl}
-              position={vec3ToAttribute(frozenModelTransform.position)}
-              rotation={vec3ToAttribute(frozenModelTransform.rotation)}
-              scale={vec3ToAttribute(frozenModelTransform.scale)}
+              data-placed-model={placedExhibit.id}
+              gltf-model="/models/buddha_001.glb"
+              position={vec3ToAttribute(placedModelTransform.position)}
+              rotation={vec3ToAttribute(placedModelTransform.rotation)}
+              scale={vec3ToAttribute(placedModelTransform.scale)}
             />
           ) : null}
 
@@ -1350,7 +1204,7 @@ export default function ARViewer() {
       ) : null}
 
       <CalibrationControls
-        jitterReductionEnabled={jitterReductionEnabled}
+        buddhaPlaced={Boolean(placedWorldTransform)}
         modelOffset={activeTransform.offset}
         onAdjust={adjustModelOffset}
         onAdjustRotation={adjustModelRotation}
@@ -1384,31 +1238,29 @@ export default function ARViewer() {
         }
         onScaleDown={() => scaleModel(MODEL_SCALE_DOWN)}
         onScaleUp={() => scaleModel(MODEL_SCALE_UP)}
-        onResetFreeze={resetFreeze}
-        onToggleJitterReduction={() =>
-          setJitterReductionEnabled((current) => !current)
-        }
+        onPlaceBuddha={placeBuddha}
+        onResetPlacement={resetPlacement}
         onToggleTestCube={() => setShowTestCube((current) => !current)}
-        onToggleFreezeAfterFound={toggleFreezeAfterFound}
         onToggle={() => setCalibrationOpen((current) => !current)}
-        freezeAfterFoundEnabled={freezeAfterFoundEnabled}
         open={calibrationOpen}
+        placementReady={placementReady}
         showTestCube={showTestCube}
       />
 
       <DebugPanel
         activeExhibitId={activeExhibit?.id ?? ""}
+        buddhaPlaced={Boolean(placedWorldTransform)}
         debug={debug}
         expanded={debugExpanded}
-        freezeActive={Boolean(frozenWorldTransform)}
-        freezeAfterFoundEnabled={freezeAfterFoundEnabled}
-        jitterReductionEnabled={jitterReductionEnabled}
         modelFileUrl={modelFileUrl}
         modelLocalPosition={modelLocalPosition}
         modelOffset={activeTransform.offset}
         modelRotation={modelRotation}
         modelScale={modelScale}
         onToggle={() => setDebugExpanded((current) => !current)}
+        placedPosition={placedModelTransform?.position}
+        placedRotation={placedModelTransform?.rotation}
+        placementReady={placementReady}
         targetFileUrl={targetFileUrl}
         trackingPaused={trackingPaused}
       />
